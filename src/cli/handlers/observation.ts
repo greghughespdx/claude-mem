@@ -9,8 +9,7 @@ import { ensureWorkerRunning, workerHttpRequest } from '../../shared/worker-util
 import { logger } from '../../utils/logger.js';
 import { HOOK_EXIT_CODES } from '../../shared/hook-constants.js';
 import { isProjectExcluded } from '../../utils/project-filter.js';
-import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
-import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+import { getSettings } from '../../shared/SettingsDefaultsManager.js';
 
 export const observationHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
@@ -38,7 +37,7 @@ export const observationHandler: EventHandler = {
     }
 
     // Check if project is excluded from tracking
-    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const settings = getSettings();
     if (isProjectExcluded(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS)) {
       logger.debug('HOOK', 'Project excluded from tracking, skipping observation', { cwd, toolName });
       return { continue: true, suppressOutput: true };

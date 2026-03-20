@@ -366,10 +366,9 @@ export class WorkerService {
 
       // Load mode configuration
       const { ModeManager } = await import('./domain/ModeManager.js');
-      const { SettingsDefaultsManager } = await import('../shared/SettingsDefaultsManager.js');
-      const { USER_SETTINGS_PATH } = await import('../shared/paths.js');
+      const { getSettings } = await import('../shared/SettingsDefaultsManager.js');
 
-      const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+      const settings = getSettings();
 
       // One-time chroma wipe for users upgrading from versions with duplicate worker bugs.
       // Only runs in local mode (chroma is local-only). Backfill at line ~414 rebuilds from SQLite.

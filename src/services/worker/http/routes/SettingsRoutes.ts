@@ -15,7 +15,7 @@ import { SettingsManager } from '../../SettingsManager.js';
 import { getBranchInfo, switchBranch, pullUpdates } from '../../BranchManager.js';
 import { ModeManager } from '../../domain/ModeManager.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
-import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
+import { SettingsDefaultsManager, getSettings, reloadSettings } from '../../../../shared/SettingsDefaultsManager.js';
 import { clearPortCache } from '../../../../shared/worker-utils.js';
 
 export class SettingsRoutes extends BaseRouteHandler {
@@ -46,8 +46,7 @@ export class SettingsRoutes extends BaseRouteHandler {
   private handleGetSettings = this.wrapHandler((req: Request, res: Response): void => {
     const settingsPath = path.join(homedir(), '.claude-mem', 'settings.json');
     this.ensureSettingsFile(settingsPath);
-    const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
-    res.json(settings);
+    res.json(getSettings());
   });
 
   /**
@@ -132,6 +131,9 @@ export class SettingsRoutes extends BaseRouteHandler {
 
     // Write back
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+
+    // Refresh the module-level settings cache so subsequent requests see the new values
+    reloadSettings();
 
     // Clear port cache to force re-reading from updated settings
     clearPortCache();

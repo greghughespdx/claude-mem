@@ -66,6 +66,44 @@ export interface SettingsDefaults {
   CLAUDE_MEM_CHROMA_DATABASE: string;
 }
 
+/**
+ * Resolve the canonical settings file path.
+ * Mirrors the DATA_DIR resolution in paths.ts without importing it
+ * (paths.ts imports SettingsDefaultsManager, so we cannot import paths.ts here).
+ *
+ * Priority: CLAUDE_MEM_DATA_DIR env var > default (~/.claude-mem)
+ * We do NOT read the settings file here to resolve DATA_DIR — that would be
+ * circular. The env-var-or-default path covers the vast majority of users.
+ */
+function resolveSettingsPath(): string {
+  const dataDir = process.env.CLAUDE_MEM_DATA_DIR ?? join(homedir(), '.claude-mem');
+  return join(dataDir, 'settings.json');
+}
+
+// Module-level cached settings instance
+let _cachedSettings: SettingsDefaults | null = null;
+
+/**
+ * Get the cached settings object.
+ * Loads from disk on the first call, returns the cached copy on every subsequent call.
+ * Call reloadSettings() to force a re-read from disk (e.g., after a settings update).
+ */
+export function getSettings(): SettingsDefaults {
+  if (!_cachedSettings) {
+    _cachedSettings = SettingsDefaultsManager.loadFromFile(resolveSettingsPath());
+  }
+  return _cachedSettings;
+}
+
+/**
+ * Discard the cached settings and reload from disk.
+ * Call this after writing a new settings.json (e.g., in SettingsRoutes after PUT/POST).
+ */
+export function reloadSettings(): SettingsDefaults {
+  _cachedSettings = SettingsDefaultsManager.loadFromFile(resolveSettingsPath());
+  return _cachedSettings;
+}
+
 export class SettingsDefaultsManager {
   /**
    * Default values for all settings

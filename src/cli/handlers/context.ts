@@ -10,8 +10,7 @@ import { ensureWorkerRunning, getWorkerPort, workerHttpRequest } from '../../sha
 import { getProjectContext } from '../../utils/project-name.js';
 import { HOOK_EXIT_CODES } from '../../shared/hook-constants.js';
 import { logger } from '../../utils/logger.js';
-import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
-import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+import { getSettings } from '../../shared/SettingsDefaultsManager.js';
 
 export const contextHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
@@ -33,7 +32,7 @@ export const contextHandler: EventHandler = {
     const port = getWorkerPort();
 
     // Check if terminal output should be shown (load settings early)
-    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const settings = getSettings();
     const showTerminalOutput = settings.CLAUDE_MEM_CONTEXT_SHOW_TERMINAL_OUTPUT === 'true';
 
     // Pass all projects (parent + worktree if applicable) for unified timeline

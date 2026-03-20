@@ -10,13 +10,11 @@
  * - Sync to database and Chroma
  */
 
-import path from 'path';
-import { homedir } from 'os';
 import { DatabaseManager } from './DatabaseManager.js';
 import { SessionManager } from './SessionManager.js';
 import { logger } from '../../utils/logger.js';
 import { buildInitPrompt, buildObservationPrompt, buildSummaryPrompt, buildContinuationPrompt } from '../../sdk/prompts.js';
-import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
+import { getSettings } from '../../shared/SettingsDefaultsManager.js';
 import { getCredential } from '../../shared/EnvManager.js';
 import type { ActiveSession, ConversationMessage } from '../worker-types.js';
 import { ModeManager } from '../domain/ModeManager.js';
@@ -413,8 +411,7 @@ export class GeminiAgent {
    * Issue #733: Uses centralized ~/.claude-mem/.env for credentials, not random project .env files
    */
   private getGeminiConfig(): { apiKey: string; model: GeminiModel; rateLimitingEnabled: boolean } {
-    const settingsPath = path.join(homedir(), '.claude-mem', 'settings.json');
-    const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+    const settings = getSettings();
 
     // API key: check settings first, then centralized claude-mem .env (NOT process.env)
     // This prevents Issue #733 where random project .env files could interfere
@@ -456,8 +453,7 @@ export class GeminiAgent {
  * Issue #733: Uses centralized ~/.claude-mem/.env, not random project .env files
  */
 export function isGeminiAvailable(): boolean {
-  const settingsPath = path.join(homedir(), '.claude-mem', 'settings.json');
-  const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+  const settings = getSettings();
   return !!(settings.CLAUDE_MEM_GEMINI_API_KEY || getCredential('GEMINI_API_KEY'));
 }
 
@@ -465,7 +461,6 @@ export function isGeminiAvailable(): boolean {
  * Check if Gemini is the selected provider
  */
 export function isGeminiSelected(): boolean {
-  const settingsPath = path.join(homedir(), '.claude-mem', 'settings.json');
-  const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+  const settings = getSettings();
   return settings.CLAUDE_MEM_PROVIDER === 'gemini';
 }

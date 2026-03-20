@@ -13,8 +13,7 @@
 
 import { buildContinuationPrompt, buildInitPrompt, buildObservationPrompt, buildSummaryPrompt } from '../../sdk/prompts.js';
 import { getCredential } from '../../shared/EnvManager.js';
-import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
-import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+import { getSettings } from '../../shared/SettingsDefaultsManager.js';
 import { logger } from '../../utils/logger.js';
 import { ModeManager } from '../domain/ModeManager.js';
 import type { ActiveSession, ConversationMessage } from '../worker-types.js';
@@ -294,7 +293,7 @@ export class OpenRouterAgent {
    * Keeps most recent messages within token budget
    */
   private truncateHistory(history: ConversationMessage[]): ConversationMessage[] {
-    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const settings = getSettings();
 
     const MAX_CONTEXT_MESSAGES = parseInt(settings.CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES) || DEFAULT_MAX_CONTEXT_MESSAGES;
     const MAX_ESTIMATED_TOKENS = parseInt(settings.CLAUDE_MEM_OPENROUTER_MAX_TOKENS) || DEFAULT_MAX_ESTIMATED_TOKENS;
@@ -436,8 +435,7 @@ export class OpenRouterAgent {
    * Issue #733: Uses centralized ~/.claude-mem/.env for credentials, not random project .env files
    */
   private getOpenRouterConfig(): { apiKey: string; model: string; siteUrl?: string; appName?: string } {
-    const settingsPath = USER_SETTINGS_PATH;
-    const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+    const settings = getSettings();
 
     // API key: check settings first, then centralized claude-mem .env (NOT process.env)
     // This prevents Issue #733 where random project .env files could interfere
@@ -459,8 +457,7 @@ export class OpenRouterAgent {
  * Issue #733: Uses centralized ~/.claude-mem/.env, not random project .env files
  */
 export function isOpenRouterAvailable(): boolean {
-  const settingsPath = USER_SETTINGS_PATH;
-  const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+  const settings = getSettings();
   return !!(settings.CLAUDE_MEM_OPENROUTER_API_KEY || getCredential('OPENROUTER_API_KEY'));
 }
 
@@ -468,7 +465,6 @@ export function isOpenRouterAvailable(): boolean {
  * Check if OpenRouter is the selected provider
  */
 export function isOpenRouterSelected(): boolean {
-  const settingsPath = USER_SETTINGS_PATH;
-  const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+  const settings = getSettings();
   return settings.CLAUDE_MEM_PROVIDER === 'openrouter';
 }

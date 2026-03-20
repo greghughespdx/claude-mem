@@ -10,8 +10,7 @@ import { getProjectName } from '../../utils/project-name.js';
 import { logger } from '../../utils/logger.js';
 import { HOOK_EXIT_CODES } from '../../shared/hook-constants.js';
 import { isProjectExcluded } from '../../utils/project-filter.js';
-import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
-import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+import { getSettings } from '../../shared/SettingsDefaultsManager.js';
 
 export const sessionInitHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
@@ -31,7 +30,7 @@ export const sessionInitHandler: EventHandler = {
     }
 
     // Check if project is excluded from tracking
-    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const settings = getSettings();
     if (cwd && isProjectExcluded(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS)) {
       logger.info('HOOK', 'Project excluded from tracking', { cwd });
       return { continue: true, suppressOutput: true };

@@ -19,8 +19,7 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import { logger } from '../../utils/logger.js';
-import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
-import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+import { getSettings } from '../../shared/SettingsDefaultsManager.js';
 import { sanitizeEnv } from '../../supervisor/env-sanitizer.js';
 import { getSupervisor } from '../../supervisor/index.js';
 
@@ -187,7 +186,7 @@ export class ChromaMcpManager {
    * In remote mode: uses http client with configured host/port/auth.
    */
   private buildCommandArgs(): string[] {
-    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const settings = getSettings();
     const chromaMode = settings.CLAUDE_MEM_CHROMA_MODE || 'local';
     const pythonVersion = process.env.CLAUDE_MEM_PYTHON_VERSION || settings.CLAUDE_MEM_PYTHON_VERSION || '3.13';
 

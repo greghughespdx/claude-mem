@@ -22,13 +22,12 @@ import {
   readdirSync
 } from 'fs';
 import { execSync } from 'child_process';
-import { SettingsDefaultsManager } from '../shared/SettingsDefaultsManager.js';
+import { getSettings } from '../shared/SettingsDefaultsManager.js';
 import { formatTime, groupByDate } from '../shared/timeline-formatting.js';
 import { isDirectChild } from '../shared/path-utils.js';
 import { logger } from '../utils/logger.js';
 
 const DB_PATH = path.join(os.homedir(), '.claude-mem', 'claude-mem.db');
-const SETTINGS_PATH = path.join(os.homedir(), '.claude-mem', 'settings.json');
 
 interface ObservationRow {
   id: number;
@@ -356,7 +355,7 @@ function regenerateFolder(
 export async function generateClaudeMd(dryRun: boolean): Promise<number> {
   try {
     const workingDir = process.cwd();
-    const settings = SettingsDefaultsManager.loadFromFile(SETTINGS_PATH);
+    const settings = getSettings();
     const observationLimit = parseInt(settings.CLAUDE_MEM_CONTEXT_OBSERVATIONS, 10) || 50;
 
     logger.info('CLAUDE_MD', 'Starting CLAUDE.md generation', {

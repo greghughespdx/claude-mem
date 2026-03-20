@@ -9,14 +9,13 @@
  */
 
 import { execSync } from 'child_process';
-import { homedir } from 'os';
 import path from 'path';
 import { DatabaseManager } from './DatabaseManager.js';
 import { SessionManager } from './SessionManager.js';
 import { logger } from '../../utils/logger.js';
 import { buildInitPrompt, buildObservationPrompt, buildSummaryPrompt, buildContinuationPrompt } from '../../sdk/prompts.js';
-import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
-import { USER_SETTINGS_PATH, OBSERVER_SESSIONS_DIR, ensureDir } from '../../shared/paths.js';
+import { getSettings } from '../../shared/SettingsDefaultsManager.js';
+import { OBSERVER_SESSIONS_DIR, ensureDir } from '../../shared/paths.js';
 import { buildIsolatedEnv, getAuthMethodDescription } from '../../shared/EnvManager.js';
 import type { ActiveSession, SDKUserMessage } from '../worker-types.js';
 import { ModeManager } from '../domain/ModeManager.js';
@@ -90,7 +89,7 @@ export class SDKAgent {
     }
 
     // Wait for agent pool slot (configurable via CLAUDE_MEM_MAX_CONCURRENT_AGENTS)
-    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const settings = getSettings();
     const maxConcurrent = parseInt(settings.CLAUDE_MEM_MAX_CONCURRENT_AGENTS, 10) || 2;
     await waitForSlot(maxConcurrent);
 
@@ -440,7 +439,7 @@ export class SDKAgent {
    * Find Claude executable (inline, called once per session)
    */
   private findClaudeExecutable(): string {
-    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const settings = getSettings();
 
     // 1. Check configured path
     if (settings.CLAUDE_CODE_PATH) {
@@ -482,8 +481,7 @@ export class SDKAgent {
    * Get model ID from settings or environment
    */
   private getModelId(): string {
-    const settingsPath = path.join(homedir(), '.claude-mem', 'settings.json');
-    const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+    const settings = getSettings();
     return settings.CLAUDE_MEM_MODEL;
   }
 }

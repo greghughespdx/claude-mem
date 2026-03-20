@@ -2,7 +2,7 @@ import path from "path";
 import { readFileSync } from "fs";
 import { logger } from "../utils/logger.js";
 import { HOOK_TIMEOUTS, getTimeout } from "./hook-constants.js";
-import { SettingsDefaultsManager } from "./SettingsDefaultsManager.js";
+import { getSettings } from "./SettingsDefaultsManager.js";
 import { MARKETPLACE_ROOT } from "./paths.js";
 
 // Named constants for health checks
@@ -55,8 +55,7 @@ export function getWorkerPort(): number {
     return cachedPort;
   }
 
-  const settingsPath = path.join(SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR'), 'settings.json');
-  const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+  const settings = getSettings();
   cachedPort = parseInt(settings.CLAUDE_MEM_WORKER_PORT, 10);
   return cachedPort;
 }
@@ -71,8 +70,7 @@ export function getWorkerHost(): string {
     return cachedHost;
   }
 
-  const settingsPath = path.join(SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR'), 'settings.json');
-  const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+  const settings = getSettings();
   cachedHost = settings.CLAUDE_MEM_WORKER_HOST;
   return cachedHost;
 }

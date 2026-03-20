@@ -11,8 +11,7 @@
 import { SessionStore } from '../sqlite/SessionStore.js';
 import { SessionSearch } from '../sqlite/SessionSearch.js';
 import { ChromaSync } from '../sync/ChromaSync.js';
-import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
-import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+import { getSettings } from '../../shared/SettingsDefaultsManager.js';
 import { logger } from '../../utils/logger.js';
 import type { DBSession } from '../worker-types.js';
 
@@ -30,7 +29,7 @@ export class DatabaseManager {
     this.sessionSearch = new SessionSearch();
 
     // Initialize ChromaSync only if Chroma is enabled (SQLite-only fallback when disabled)
-    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const settings = getSettings();
     const chromaEnabled = settings.CLAUDE_MEM_CHROMA_ENABLED !== 'false';
     if (chromaEnabled) {
       this.chromaSync = new ChromaSync('claude-mem');

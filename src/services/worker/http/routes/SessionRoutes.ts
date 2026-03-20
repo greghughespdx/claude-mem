@@ -19,8 +19,7 @@ import { BaseRouteHandler } from '../BaseRouteHandler.js';
 import { SessionEventBroadcaster } from '../../events/SessionEventBroadcaster.js';
 import { SessionCompletionHandler } from '../../session/SessionCompletionHandler.js';
 import { PrivacyCheckValidator } from '../../validation/PrivacyCheckValidator.js';
-import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
-import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
+import { getSettings } from '../../../../shared/SettingsDefaultsManager.js';
 import { getProcessBySession, ensureProcessExit } from '../../ProcessRegistry.js';
 
 export class SessionRoutes extends BaseRouteHandler {
@@ -503,7 +502,7 @@ export class SessionRoutes extends BaseRouteHandler {
     }
 
     // Load skip tools from settings
-    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const settings = getSettings();
     const skipTools = new Set(settings.CLAUDE_MEM_SKIP_TOOLS.split(',').map(t => t.trim()).filter(Boolean));
 
     // Skip low-value or meta tools
