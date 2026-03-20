@@ -56,6 +56,8 @@ export interface SettingsDefaults {
   CLAUDE_MEM_FOLDER_MD_EXCLUDE: string;  // JSON array of folder paths to exclude from CLAUDE.md generation
   // Session Init Deduplication
   CLAUDE_MEM_SESSION_INIT_DEDUP: string;  // 'true' | 'false' - deduplicate session-init per contentSessionId (default: true)
+  // Prompt Filtering
+  CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: string;  // Comma-separated substrings; prompts containing any are not stored (default: '')
   // Chroma Vector Database Configuration
   CLAUDE_MEM_CHROMA_ENABLED: string;   // 'true' | 'false' - set to 'false' for SQLite-only mode
   CLAUDE_MEM_CHROMA_MODE: string;      // 'local' | 'remote'
@@ -117,6 +119,8 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_FOLDER_MD_EXCLUDE: '[]',  // JSON array of folder paths to exclude from CLAUDE.md generation
     // Session Init Deduplication
     CLAUDE_MEM_SESSION_INIT_DEDUP: 'true',  // Deduplicate session-init per contentSessionId
+    // Prompt Filtering
+    CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: '',  // Comma-separated substrings; prompts containing any are not stored
     // Chroma Vector Database Configuration
     CLAUDE_MEM_CHROMA_ENABLED: 'true',         // Set to 'false' to disable Chroma and use SQLite-only search
     CLAUDE_MEM_CHROMA_MODE: 'local',           // 'local' uses persistent chroma-mcp via uvx, 'remote' connects to existing server
