@@ -57,6 +57,8 @@ export interface SettingsDefaults {
   // Reranking Configuration
   CLAUDE_MEM_RERANK_ENABLED: string;  // 'true' | 'false' - enable Flashrank cross-encoder reranking (default: 'false')
   CLAUDE_MEM_RERANK_URL: string;      // URL of the Flashrank reranker microservice (default: 'http://localhost:37778')
+  // Prompt Filtering
+  CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: string;  // Comma-separated substrings; prompts containing any are not stored (default: '')
   // Chroma Vector Database Configuration
   CLAUDE_MEM_CHROMA_ENABLED: string;   // 'true' | 'false' - set to 'false' for SQLite-only mode
   CLAUDE_MEM_CHROMA_MODE: string;      // 'local' | 'remote'
@@ -119,6 +121,8 @@ export class SettingsDefaultsManager {
     // Reranking Configuration
     CLAUDE_MEM_RERANK_ENABLED: 'false',        // Disabled by default; requires flashrank-service.py running
     CLAUDE_MEM_RERANK_URL: 'http://127.0.0.1:37778',  // Default port for the Flashrank microservice
+    // Prompt Filtering
+    CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: '',     // Empty = no filtering; set to comma-separated substrings to skip storage
     // Chroma Vector Database Configuration
     CLAUDE_MEM_CHROMA_ENABLED: 'true',         // Set to 'false' to disable Chroma and use SQLite-only search
     CLAUDE_MEM_CHROMA_MODE: 'local',           // 'local' uses persistent chroma-mcp via uvx, 'remote' connects to existing server
