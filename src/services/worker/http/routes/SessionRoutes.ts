@@ -712,6 +712,27 @@ export class SessionRoutes extends BaseRouteHandler {
       return;
     }
 
+    // Early exit: check if prompt matches any ignore patterns BEFORE creating session
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const ignorePatterns = settings.CLAUDE_MEM_IGNORE_PROMPT_PATTERNS;
+    if (ignorePatterns) {
+      const patterns = ignorePatterns.split(',').map((p: string) => p.trim()).filter(Boolean);
+      if (patterns.some((pattern: string) => prompt.includes(pattern))) {
+        logger.debug('HOOK', 'Session init - prompt matches ignore pattern, skipping entirely', {
+          contentSessionId,
+          project
+        });
+
+        res.json({
+          sessionDbId: -1,
+          promptNumber: 0,
+          skipped: true,
+          reason: 'ignored'
+        });
+        return;
+      }
+    }
+
     const store = this.dbManager.getSessionStore();
 
     // Step 1: Create/get SDK session (idempotent INSERT OR IGNORE)
@@ -754,27 +775,6 @@ export class SessionRoutes extends BaseRouteHandler {
         reason: 'private'
       });
       return;
-    }
-
-    // Step 4b: Check if prompt matches any ignore patterns
-    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-    const ignorePatterns = settings.CLAUDE_MEM_IGNORE_PROMPT_PATTERNS;
-    if (ignorePatterns) {
-      const patterns = ignorePatterns.split(',').map((p: string) => p.trim()).filter(Boolean);
-      if (patterns.some((pattern: string) => cleanedPrompt.includes(pattern))) {
-        logger.debug('HOOK', 'Session init - prompt matches ignore pattern, skipping storage', {
-          sessionId: sessionDbId,
-          promptNumber
-        });
-
-        res.json({
-          sessionDbId,
-          promptNumber,
-          skipped: true,
-          reason: 'ignored'
-        });
-        return;
-      }
     }
 
     // Step 5: Save cleaned user prompt
