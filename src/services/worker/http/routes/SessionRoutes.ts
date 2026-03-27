@@ -530,8 +530,16 @@ export class SessionRoutes extends BaseRouteHandler {
     try {
       const store = this.dbManager.getSessionStore();
 
-      // Get or create session
-      const sessionDbId = store.createSDKSession(contentSessionId, '', '');
+      // Look up existing session — do NOT create if missing.
+      // If session-init skipped this prompt (e.g., ignore pattern), no row exists and we skip too.
+      const existingRow = store.db.prepare('SELECT id FROM sdk_sessions WHERE content_session_id = ?')
+        .get(contentSessionId) as { id: number } | undefined;
+      if (!existingRow) {
+        logger.debug('SESSION', 'No session exists for contentSessionId, skipping observation', { contentSessionId, tool_name });
+        res.json({ status: 'skipped', reason: 'no_session' });
+        return;
+      }
+      const sessionDbId = existingRow.id;
       const promptNumber = store.getPromptNumberFromUserPrompts(contentSessionId);
 
       // Privacy check: skip if user prompt was entirely private
@@ -602,8 +610,15 @@ export class SessionRoutes extends BaseRouteHandler {
 
     const store = this.dbManager.getSessionStore();
 
-    // Get or create session
-    const sessionDbId = store.createSDKSession(contentSessionId, '', '');
+    // Look up existing session — do NOT create if missing.
+    const existingRow = store.db.prepare('SELECT id FROM sdk_sessions WHERE content_session_id = ?')
+      .get(contentSessionId) as { id: number } | undefined;
+    if (!existingRow) {
+      logger.debug('SESSION', 'No session exists for contentSessionId, skipping summarize', { contentSessionId });
+      res.json({ status: 'skipped', reason: 'no_session' });
+      return;
+    }
+    const sessionDbId = existingRow.id;
     const promptNumber = store.getPromptNumberFromUserPrompts(contentSessionId);
 
     // Privacy check: skip if user prompt was entirely private
@@ -652,9 +667,15 @@ export class SessionRoutes extends BaseRouteHandler {
 
     const store = this.dbManager.getSessionStore();
 
-    // Look up sessionDbId from contentSessionId (createSDKSession is idempotent)
-    // Pass empty strings - we only need the ID lookup, not to create a new session
-    const sessionDbId = store.createSDKSession(contentSessionId, '', '');
+    // Look up existing session — do NOT create if missing.
+    const existingRow = store.db.prepare('SELECT id FROM sdk_sessions WHERE content_session_id = ?')
+      .get(contentSessionId) as { id: number } | undefined;
+    if (!existingRow) {
+      logger.debug('SESSION', 'No session exists for contentSessionId, skipping complete', { contentSessionId });
+      res.json({ status: 'skipped', reason: 'no_session' });
+      return;
+    }
+    const sessionDbId = existingRow.id;
 
     // Check if session is in the active sessions map
     const activeSession = this.sessionManager.getSession(sessionDbId);
