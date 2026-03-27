@@ -77,9 +77,9 @@ export const sessionInitHandler: EventHandler = {
     // Debug-level alignment log for detailed tracing
     logger.debug('HOOK', `[ALIGNMENT] Hook Entry | contentSessionId=${sessionId} | prompt#=${promptNumber} | sessionDbId=${sessionDbId}`);
 
-    // Check if prompt was entirely private (worker performs privacy check)
-    if (initResult.skipped && initResult.reason === 'private') {
-      logger.info('HOOK', `INIT_COMPLETE | sessionDbId=${sessionDbId} | promptNumber=${promptNumber} | skipped=true | reason=private`, {
+    // Check if prompt was skipped (private or ignored pattern)
+    if (initResult.skipped && (initResult.reason === 'private' || initResult.reason === 'ignored')) {
+      logger.info('HOOK', `INIT_COMPLETE | sessionDbId=${sessionDbId} | promptNumber=${promptNumber} | skipped=true | reason=${initResult.reason}`, {
         sessionId: sessionDbId
       });
       return { continue: true, suppressOutput: true };
