@@ -11,6 +11,8 @@ import { ensureWorkerRunning, workerHttpRequest } from '../../shared/worker-util
 import { logger } from '../../utils/logger.js';
 import { extractLastMessage } from '../../shared/transcript-parser.js';
 import { HOOK_EXIT_CODES, HOOK_TIMEOUTS, getTimeout } from '../../shared/hook-constants.js';
+import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
+import { USER_SETTINGS_PATH } from '../../shared/paths.js';
 
 const SUMMARIZE_TIMEOUT_MS = getTimeout(HOOK_TIMEOUTS.DEFAULT);
 
@@ -30,6 +32,29 @@ export const summarizeHandler: EventHandler = {
       // No transcript available - skip summary gracefully (not an error)
       logger.debug('HOOK', `No transcriptPath in Stop hook input for session ${sessionId} - skipping summary`);
       return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
+    }
+
+    // Check if the last user prompt matches ignore patterns (e.g., idle heartbeats)
+    // Session-init skips ignored prompts, but the Stop hook fires regardless.
+    // Without this check, summaries accumulate for every ignored prompt in long-running sessions.
+    try {
+      const lastUserMessage = extractLastMessage(transcriptPath, 'user', false);
+      if (lastUserMessage) {
+        const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+        const ignorePatterns = settings.CLAUDE_MEM_IGNORE_PROMPT_PATTERNS;
+        if (ignorePatterns) {
+          const patterns = ignorePatterns.split(',').map((p: string) => p.trim()).filter(Boolean);
+          if (patterns.some((pattern: string) => lastUserMessage.includes(pattern))) {
+            logger.debug('HOOK', 'Stop hook - last user prompt matches ignore pattern, skipping summary', {
+              contentSessionId: sessionId
+            });
+            return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
+          }
+        }
+      }
+    } catch (err) {
+      // Non-critical: if we can't check, proceed with summarization
+      logger.debug('HOOK', `Stop hook - could not check ignore patterns: ${err instanceof Error ? err.message : err}`);
     }
 
     // Extract last assistant message from transcript (the work Claude did)
