@@ -1,0 +1,10 @@
+{
+  "branch": "deploy",
+  "commit": "718bcd0b",
+  "commitFull": "718bcd0b96b4c01cda56ab4adb2e88486beea74e",
+  "buildTime": "2026-04-08T04:11:16Z",
+  "version": "10.6.3",
+  "features": [
+    "718bcd0b feat: add deploy branch with build guard and feature tracking",    "dc193c7c fix: block ghost sessions from all code paths",    "1dc9c539 fix: move ignore pattern check before session creation",    "adc28a65 feat: add CLAUDE_MEM_IGNORE_PROMPT_PATTERNS setting to filter noise prompts",    "201bee75 fix: preserve reranked relevance order after SQL hydration",    "7f8e4237 fix: address CodeRabbit review feedback on flashrank PR",    "ced92914 feat: add Flashrank reranker microservice for improved search relevance",    "d0688212 docs: update CHANGELOG.md for v10.6.3",    "ddb57ea5 chore: bump version to 10.6.3",    "6885bdb0 Merge pull request #1518 from thedotmack/thedotmack/patch-plan-issues",    "0321f426 fix: remove import.meta.url banner from CJS files run by Node.js",    "80d1deed fix: address PR review feedback from CodeRabbit",    "07ab7000 fix: patch 7 critical bugs affecting all non-dev-machine users and Windows",    "a656af2b feat: improve Gemini CLI timeline display by stripping ANSI colors and providing markdown fallback",    "e2a23028 docs: update CHANGELOG.md for v10.6.2",    "0524fa83 chore: bump version to 10.6.2",    "4d7bec4d fix: stop spinner from spinning forever (#1440)",    "9f529a30 feat: strip <system_instruction> tags before DB storage (#1398)",    "b34aff1a docs: update CHANGELOG.md for v10.6.1",    "d54e5742 chore: bump version to 10.6.1",    "c7abb01d feat(timeline-report): detect git worktree and use parent project as data source",    "7e072106 feat: add timeline-report skill with token economics, compress context output 53%",    "648c8480 docs: update CHANGELOG.md for v10.6.0"
+  ]
+}
