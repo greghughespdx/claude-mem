@@ -47,10 +47,11 @@ export const sessionInitHandler: EventHandler = {
     // never be stored as user prompts. Requires BOTH the system identity line AND
     // the observed_from_primary_session wrapper to avoid false positives on
     // legitimate prompts that mention these terms. (#mc-ut6)
-    if ((prompt.includes('You are a Claude-Mem, a specialized observer') &&
-         prompt.includes('<observed_from_primary_session>')) ||
-        (prompt.includes('MODE SWITCH: PROGRESS SUMMARY') &&
-         prompt.includes('CRITICAL TAG REQUIREMENT'))) {
+    const trimmedPrompt = prompt.trimStart();
+    if (trimmedPrompt.startsWith('<observed_from_primary_session>') ||
+        trimmedPrompt.startsWith('--- MODE SWITCH: PROGRESS SUMMARY ---') ||
+        (prompt.includes('You are a Claude-Mem, a specialized observer') &&
+         prompt.includes('<observed_from_primary_session>'))) {
       logger.debug('HOOK', 'session-init: Skipping internal pipeline prompt entirely');
       return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
     }
