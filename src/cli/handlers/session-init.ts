@@ -40,7 +40,18 @@ export const sessionInitHandler: EventHandler = {
 
     // Handle image-only prompts (where text prompt is empty/undefined)
     // Use placeholder so sessions still get created and tracked for memory
-    const prompt = (!rawPrompt || !rawPrompt.trim()) ? '[media prompt]' : rawPrompt;
+    let prompt = (!rawPrompt || !rawPrompt.trim()) ? '[media prompt]' : rawPrompt;
+
+    // Filter out claude-mem observer/system prompts that get recursively nested
+    // in the hook stdin. These are internal to the observation pipeline and should
+    // never be stored as user prompts. Requires BOTH the system identity line AND
+    // the observed_from_primary_session wrapper to avoid false positives on
+    // legitimate prompts that mention these terms. (#mc-ut6)
+    if (prompt.includes('You are a Claude-Mem, a specialized observer') &&
+        prompt.includes('<observed_from_primary_session>')) {
+      logger.debug('HOOK', 'session-init: Filtered recursive observer prompt from user prompt storage');
+      prompt = '[observer prompt filtered]';
+    }
 
     const project = getProjectContext(cwd).primary;
     const platformSource = normalizePlatformSource(input.platform);

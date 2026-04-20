@@ -94,7 +94,10 @@ export class SessionRoutes extends BaseRouteHandler {
    * The next generator will use the new provider with shared conversationHistory.
    */
   private static readonly STALE_GENERATOR_THRESHOLD_MS = 30_000; // 30 seconds (#1099)
-  private static readonly MAX_SESSION_WALL_CLOCK_MS = 4 * 60 * 60 * 1000; // 4 hours (#1590)
+  private static readonly MAX_SESSION_WALL_CLOCK_MS = (() => {
+    const hours = parseFloat(SettingsDefaultsManager.get('CLAUDE_MEM_SESSION_MAX_AGE_HOURS'));
+    return (isNaN(hours) || hours <= 0 ? 4 : hours) * 60 * 60 * 1000;
+  })(); // Configurable via CLAUDE_MEM_SESSION_MAX_AGE_HOURS env var (default: 168 hours / 7 days, #1590)
 
   private ensureGeneratorRunning(sessionDbId: number, source: string): void {
     const session = this.sessionManager.getSession(sessionDbId);
