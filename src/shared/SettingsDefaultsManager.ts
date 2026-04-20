@@ -57,6 +57,7 @@ export interface SettingsDefaults {
   // Process Management
   CLAUDE_MEM_MAX_CONCURRENT_AGENTS: string;  // Max concurrent Claude SDK agent subprocesses (default: 2)
   CLAUDE_MEM_SESSION_MAX_AGE_HOURS: string;  // Max wall-clock age for a session before aborting (default: '168', env-only)
+  CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: string;  // Comma-separated substrings to skip in prompt storage (default: idle heartbeat patterns)
   // Exclusion Settings
   CLAUDE_MEM_EXCLUDED_PROJECTS: string;  // Comma-separated glob patterns for excluded project paths
   CLAUDE_MEM_FOLDER_MD_EXCLUDE: string;  // JSON array of folder paths to exclude from CLAUDE.md generation
@@ -132,6 +133,7 @@ export class SettingsDefaultsManager {
     // Process Management
     CLAUDE_MEM_MAX_CONCURRENT_AGENTS: '2',  // Max concurrent Claude SDK agent subprocesses
     CLAUDE_MEM_SESSION_MAX_AGE_HOURS: '168',  // 7 days — long sessions are normal for our workflow
+    CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: '[channel:system time:,Idle State Heartbeat: check messages and continue any paused work',  // Skip noise prompts (full automation strings only to avoid false positives)
     // Exclusion Settings
     CLAUDE_MEM_EXCLUDED_PROJECTS: '',  // Comma-separated glob patterns for excluded project paths
     CLAUDE_MEM_FOLDER_MD_EXCLUDE: '[]',  // JSON array of folder paths to exclude from CLAUDE.md generation

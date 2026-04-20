@@ -48,12 +48,26 @@ export const sessionInitHandler: EventHandler = {
     // the observed_from_primary_session wrapper to avoid false positives on
     // legitimate prompts that mention these terms. (#mc-ut6)
     const trimmedPrompt = prompt.trimStart();
+
+    // Skip internal pipeline prompts (observer, progress summary)
     if (trimmedPrompt.startsWith('<observed_from_primary_session>') ||
         trimmedPrompt.startsWith('--- MODE SWITCH: PROGRESS SUMMARY ---') ||
         (prompt.includes('You are a Claude-Mem, a specialized observer') &&
          prompt.includes('<observed_from_primary_session>'))) {
       logger.debug('HOOK', 'session-init: Skipping internal pipeline prompt entirely');
       return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
+    }
+
+    // Skip noise prompts: idle heartbeats, loop wake-ups, system channel messages.
+    // These generate low-value observations that clutter the memory store.
+    // Configurable via CLAUDE_MEM_IGNORE_PROMPT_PATTERNS (comma-separated substrings).
+    const ignorePatterns = settings.CLAUDE_MEM_IGNORE_PROMPT_PATTERNS;
+    if (ignorePatterns) {
+      const patterns = ignorePatterns.split(',').map((p: string) => p.trim()).filter(Boolean);
+      if (patterns.some((pattern: string) => prompt.includes(pattern))) {
+        logger.debug('HOOK', 'session-init: Skipping prompt matching ignore pattern');
+        return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
+      }
     }
 
     const project = getProjectContext(cwd).primary;
