@@ -49,8 +49,8 @@ export const sessionInitHandler: EventHandler = {
     // legitimate prompts that mention these terms. (#mc-ut6)
     if (prompt.includes('You are a Claude-Mem, a specialized observer') &&
         prompt.includes('<observed_from_primary_session>')) {
-      logger.debug('HOOK', 'session-init: Filtered recursive observer prompt from user prompt storage');
-      prompt = '[observer prompt filtered]';
+      logger.debug('HOOK', 'session-init: Skipping recursive observer prompt entirely');
+      return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
     }
 
     const project = getProjectContext(cwd).primary;
