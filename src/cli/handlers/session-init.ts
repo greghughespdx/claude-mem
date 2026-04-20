@@ -44,16 +44,15 @@ export const sessionInitHandler: EventHandler = {
 
     // Filter out claude-mem observer/system prompts that get recursively nested
     // in the hook stdin. These are internal to the observation pipeline and should
-    // never be stored as user prompts. Requires BOTH the system identity line AND
-    // the observed_from_primary_session wrapper to avoid false positives on
-    // legitimate prompts that mention these terms. (#mc-ut6)
+    // never be stored as user prompts. (#mc-ut6)
     const trimmedPrompt = prompt.trimStart();
 
     // Skip internal pipeline prompts (observer, progress summary)
     if (trimmedPrompt.startsWith('<observed_from_primary_session>') ||
         trimmedPrompt.startsWith('--- MODE SWITCH: PROGRESS SUMMARY ---') ||
-        (prompt.includes('You are a Claude-Mem, a specialized observer') &&
-         prompt.includes('<observed_from_primary_session>'))) {
+        trimmedPrompt.startsWith('You are a Claude-Mem, a specialized observer') ||
+        trimmedPrompt.startsWith('Hello memory agent, you are continuing to observe') ||
+        prompt.includes('<observed_from_primary_session>')) {
       logger.debug('HOOK', 'session-init: Skipping internal pipeline prompt entirely');
       return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
     }
