@@ -64,6 +64,32 @@ export const sessionInitHandler: EventHandler = {
     // Use placeholder so sessions still get created and tracked for memory
     const prompt = (!rawPrompt || !rawPrompt.trim()) ? '[media prompt]' : rawPrompt;
 
+    // Filter out internal pipeline prompts that get recursively nested in
+    // the hook stdin. These are observer/progress-summary prompts produced
+    // by claude-mem itself; they must never be stored as user prompts.
+    const trimmedPrompt = prompt.trimStart();
+    if (trimmedPrompt.startsWith('<observed_from_primary_session>') ||
+        trimmedPrompt.startsWith('--- MODE SWITCH: PROGRESS SUMMARY ---') ||
+        trimmedPrompt.startsWith('You are a Claude-Mem, a specialized observer') ||
+        trimmedPrompt.startsWith('Hello memory agent, you are continuing to observe') ||
+        prompt.includes('<observed_from_primary_session>')) {
+      logger.debug('HOOK', 'session-init: Skipping internal pipeline prompt entirely');
+      return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
+    }
+
+    // Skip noise prompts: idle heartbeats, loop wake-ups, system channel
+    // messages. These generate low-value observations that clutter memory.
+    // Configurable via CLAUDE_MEM_IGNORE_PROMPT_PATTERNS (comma-separated
+    // substrings matched against the full prompt text).
+    const ignorePatterns = settings.CLAUDE_MEM_IGNORE_PROMPT_PATTERNS;
+    if (ignorePatterns) {
+      const patterns = ignorePatterns.split(',').map((p: string) => p.trim()).filter(Boolean);
+      if (patterns.some((pattern: string) => prompt.includes(pattern))) {
+        logger.debug('HOOK', 'session-init: Skipping prompt matching ignore pattern');
+        return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
+      }
+    }
+
     const project = getProjectContext(cwd).primary;
     const platformSource = normalizePlatformSource(input.platform);
 

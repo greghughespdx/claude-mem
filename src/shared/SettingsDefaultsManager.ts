@@ -59,6 +59,7 @@ export interface SettingsDefaults {
   // Exclusion Settings
   CLAUDE_MEM_EXCLUDED_PROJECTS: string;  // Comma-separated glob patterns for excluded project paths
   CLAUDE_MEM_FOLDER_MD_EXCLUDE: string;  // JSON array of folder paths to exclude from CLAUDE.md generation
+  CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: string;  // Comma-separated substrings to skip in prompt storage (e.g. idle heartbeat patterns)
   // Semantic Context Injection (per-prompt via Chroma)
   CLAUDE_MEM_SEMANTIC_INJECT: string;        // 'true' | 'false' - inject relevant observations on each prompt
   CLAUDE_MEM_SEMANTIC_INJECT_LIMIT: string;  // Max observations to inject per prompt
@@ -136,6 +137,7 @@ export class SettingsDefaultsManager {
     // Exclusion Settings
     CLAUDE_MEM_EXCLUDED_PROJECTS: '',  // Comma-separated glob patterns for excluded project paths
     CLAUDE_MEM_FOLDER_MD_EXCLUDE: '[]',  // JSON array of folder paths to exclude from CLAUDE.md generation
+    CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: '[channel:system time:,Idle State Heartbeat: check messages and continue any paused work',  // Skip noise prompts (full automation strings only, to avoid false positives)
     // Semantic Context Injection (per-prompt via Chroma vector search)
     CLAUDE_MEM_SEMANTIC_INJECT: 'false',             // Inject relevant past observations on every UserPromptSubmit (experimental, disabled by default)
     CLAUDE_MEM_SEMANTIC_INJECT_LIMIT: '5',           // Top-N most relevant observations to inject per prompt
