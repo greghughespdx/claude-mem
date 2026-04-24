@@ -66,6 +66,9 @@ export interface SettingsDefaults {
   CLAUDE_MEM_TIER_ROUTING_ENABLED: string;   // 'true' | 'false' - enable model tier routing
   CLAUDE_MEM_TIER_SIMPLE_MODEL: string;      // Tier alias or model ID for simple tool observations (Read, Glob, Grep)
   CLAUDE_MEM_TIER_SUMMARY_MODEL: string;     // Tier alias or model ID for session summaries
+  // Reranking Configuration
+  CLAUDE_MEM_RERANK_ENABLED: string;  // 'true' | 'false' - enable Flashrank cross-encoder reranking (default: 'false')
+  CLAUDE_MEM_RERANK_URL: string;      // URL of the Flashrank reranker microservice (default: 'http://localhost:37778')
   // Chroma Vector Database Configuration
   CLAUDE_MEM_CHROMA_ENABLED: string;   // 'true' | 'false' - set to 'false' for SQLite-only mode
   CLAUDE_MEM_CHROMA_MODE: string;      // 'local' | 'remote'
@@ -143,6 +146,9 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_TIER_ROUTING_ENABLED: 'true',         // Route observations to models by complexity
     CLAUDE_MEM_TIER_SIMPLE_MODEL: 'haiku', // Portable tier alias — works across Direct API, Bedrock, Vertex, Azure (see #1463)
     CLAUDE_MEM_TIER_SUMMARY_MODEL: '',                // Empty = use default model for summaries
+    // Reranking Configuration
+    CLAUDE_MEM_RERANK_ENABLED: 'false',        // Disabled by default; requires flashrank-service.py running
+    CLAUDE_MEM_RERANK_URL: 'http://localhost:37778',  // Default port for the Flashrank microservice
     // Chroma Vector Database Configuration
     CLAUDE_MEM_CHROMA_ENABLED: 'true',         // Set to 'false' to disable Chroma and use SQLite-only search
     CLAUDE_MEM_CHROMA_MODE: 'local',           // 'local' uses persistent chroma-mcp via uvx, 'remote' connects to existing server

@@ -22,6 +22,8 @@ import {
 } from '../types.js';
 import { ChromaSync } from '../../../sync/ChromaSync.js';
 import { SessionStore } from '../../../sqlite/SessionStore.js';
+import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
+import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
 import { logger } from '../../../../utils/logger.js';
 
 export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchStrategy {
@@ -116,7 +118,15 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
       };
     }
 
-    const recentItems = this.filterByRecency(chromaResults);
+    let recentItems = this.filterByRecency(chromaResults);
+
+    // Optionally rerank with Flashrank cross-encoder for improved relevance
+    // ordering. Falls through to Chroma ordering if the service is
+    // unavailable or CLAUDE_MEM_RERANK_ENABLED is off.
+    if (recentItems.length > 1 && query) {
+      recentItems = await this.rerank(query, recentItems);
+    }
+
     const categorized = this.categorizeByDocType(recentItems, options);
 
     let observations: ObservationSearchResult[] = [];
@@ -243,5 +253,88 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
     }
 
     return { obsIds, sessionIds, promptIds };
+  }
+
+  /**
+   * Optionally rerank Chroma results using the Flashrank microservice.
+   *
+   * Chroma returns results ordered by embedding similarity. An external
+   * cross-encoder can re-score the candidates using full query-document
+   * attention, typically improving precision of the top results returned
+   * to context. The reranker service (POST /rerank) is optional; if
+   * CLAUDE_MEM_RERANK_ENABLED is not 'true' or the service is unreachable,
+   * results fall back to Chroma ordering.
+   */
+  private async rerank(
+    query: string,
+    items: Array<{ id: number; meta: ChromaMetadata }>
+  ): Promise<Array<{ id: number; meta: ChromaMetadata }>> {
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    if (settings.CLAUDE_MEM_RERANK_ENABLED !== 'true') {
+      return items;
+    }
+
+    const rerankUrl = settings.CLAUDE_MEM_RERANK_URL || 'http://localhost:37778';
+
+    try {
+      // Build passage list from available Chroma metadata fields.
+      // Chroma metadata does not store the full document text (that lives
+      // in SQLite), but title, subtitle, concepts, and type provide
+      // enough signal for reranking.
+      const passages = items.map(item => {
+        const parts = [
+          item.meta?.title,
+          item.meta?.subtitle,
+          item.meta?.concepts,
+          item.meta?.type,
+          item.meta?.doc_type
+        ].filter(Boolean);
+        return {
+          id: String(item.id),
+          text: parts.join(' ') || `${item.meta?.doc_type || 'doc'} ${item.id}`
+        };
+      });
+
+      const response = await fetch(`${rerankUrl}/rerank`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, passages, top_k: passages.length }),
+        signal: AbortSignal.timeout(5000)  // 5-second timeout
+      });
+
+      if (!response.ok) {
+        logger.warn('SEARCH', 'Flashrank reranker returned non-OK status', {
+          status: response.status
+        });
+        return items;
+      }
+
+      const data = await response.json() as {
+        results: Array<{ id: string; score: number }>;
+        latency_ms: number;
+      };
+
+      logger.debug('SEARCH', 'Flashrank reranker completed', {
+        itemCount: items.length,
+        latency_ms: data.latency_ms
+      });
+
+      // Build a score map and reorder items
+      const scoreMap = new Map<number, number>();
+      for (const result of data.results) {
+        scoreMap.set(Number(result.id), result.score);
+      }
+
+      return items
+        .slice()
+        .sort((a, b) => (scoreMap.get(b.id) ?? 0) - (scoreMap.get(a.id) ?? 0));
+
+    } catch (error) {
+      // Non-fatal: reranker is optional. Fall back to Chroma ordering.
+      logger.debug('SEARCH', 'Flashrank reranker unavailable, using Chroma ordering', {
+        error: (error as Error).message
+      });
+      return items;
+    }
   }
 }
