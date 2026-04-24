@@ -153,6 +153,10 @@ export class SDKAgent {
         ...(shouldResume && session.memorySessionId ? { resume: session.memorySessionId } : {}),
         disallowedTools,
         abortController: session.abortController,
+        // Internal worker subprocesses should not inherit user-tier
+        // settings, which may start user-session integrations or plugins
+        // with side effects. Project and local settings still apply.
+        settingSources: ['project', 'local'],
         pathToClaudeCodeExecutable: claudePath,
         // Custom spawn factory: spawns the SDK child in its own POSIX process
         // group so the worker can tear down the whole subtree on shutdown.
