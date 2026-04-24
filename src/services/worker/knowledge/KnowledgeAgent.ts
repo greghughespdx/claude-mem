@@ -78,6 +78,9 @@ export class KnowledgeAgent {
         model: this.getModelId(),
         cwd: OBSERVER_SESSIONS_DIR,
         disallowedTools: KNOWLEDGE_AGENT_DISALLOWED_TOOLS,
+        // See SDKAgent.ts for rationale — skip user-tier settings to
+        // prevent channel-plugin leakage into the worker subprocess.
+        settingSources: ['project', 'local'],
         pathToClaudeCodeExecutable: claudePath,
         env: isolatedEnv
       }
@@ -194,6 +197,9 @@ export class KnowledgeAgent {
         resume: corpus.session_id!,
         cwd: OBSERVER_SESSIONS_DIR,
         disallowedTools: KNOWLEDGE_AGENT_DISALLOWED_TOOLS,
+        // See SDKAgent.ts for rationale — skip user-tier settings to
+        // prevent channel-plugin leakage into the worker subprocess.
+        settingSources: ['project', 'local'],
         pathToClaudeCodeExecutable: claudePath,
         env: isolatedEnv
       }

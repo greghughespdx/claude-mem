@@ -142,6 +142,14 @@ export class SDKAgent {
         ...(shouldResume && { resume: session.memorySessionId }),
         disallowedTools,
         abortController: session.abortController,
+        // Skip user-tier settings so user-activated channel plugins (e.g.
+        // the Telegram channel plugin) do not load inside this internal
+        // worker subprocess. Loading them here would cause the plugin to
+        // start a polling loop and evict the user's main session from
+        // any singleton external resource (Telegram Bot API getUpdates
+        // slot is the observed case). Only project- and local-tier
+        // settings are read.
+        settingSources: ['project', 'local'],
         pathToClaudeCodeExecutable: claudePath,
         // Custom spawn function captures PIDs to fix zombie process accumulation
         spawnClaudeCodeProcess: createPidCapturingSpawn(session.sessionDbId),
