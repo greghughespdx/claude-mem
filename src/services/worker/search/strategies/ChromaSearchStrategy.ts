@@ -36,14 +36,16 @@ interface RerankConfig {
 
 export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchStrategy {
   readonly name = 'chroma';
+  private readonly rerankConfig: RerankConfig;
 
   constructor(
     private chromaSync: ChromaSync,
     private sessionStore: SessionStore,
     private reranker: LexicalSearchReranker = new LexicalSearchReranker(),
-    private rerankConfigOverride?: RerankConfig
+    rerankConfigOverride?: RerankConfig
   ) {
     super();
+    this.rerankConfig = rerankConfigOverride ?? loadRerankConfigFromSettings();
   }
 
   canHandle(options: StrategySearchOptions): boolean {
@@ -113,7 +115,7 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
       project?: string;
     }
   ): Promise<StrategySearchResult> {
-    const rerankConfig = this.loadRerankConfig();
+    const rerankConfig = this.rerankConfig;
     const candidateLimit = rerankConfig.enabled
       ? Math.max(options.limit, Math.min(rerankConfig.candidates, SEARCH_CONSTANTS.CHROMA_BATCH_SIZE))
       : SEARCH_CONSTANTS.CHROMA_BATCH_SIZE;
@@ -274,26 +276,6 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
     return { obsIds, sessionIds, promptIds };
   }
 
-  private loadRerankConfig(): RerankConfig {
-    if (this.rerankConfigOverride) {
-      return this.rerankConfigOverride;
-    }
-
-    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-    const candidates = parsePositiveInt(
-      settings.CLAUDE_MEM_SEARCH_RERANK_CANDIDATES,
-      50,
-      SEARCH_CONSTANTS.CHROMA_BATCH_SIZE
-    );
-    const timeoutMs = parsePositiveInt(settings.CLAUDE_MEM_SEARCH_RERANK_TIMEOUT_MS, 25, 500);
-
-    return {
-      enabled: settings.CLAUDE_MEM_SEARCH_RERANK_ENABLED === 'true',
-      candidates,
-      timeoutMs
-    };
-  }
-
   private buildChromaRankMap(items: Array<{ id: number; meta: ChromaMetadata }>): Map<string, number> {
     const ranks = new Map<string, number>();
     items.forEach((item, index) => {
@@ -368,6 +350,22 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
   private rankKey(type: RerankDocumentType, id: number): string {
     return `${type}:${id}`;
   }
+}
+
+function loadRerankConfigFromSettings(): RerankConfig {
+  const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+  const candidates = parsePositiveInt(
+    settings.CLAUDE_MEM_SEARCH_RERANK_CANDIDATES,
+    50,
+    SEARCH_CONSTANTS.CHROMA_BATCH_SIZE
+  );
+  const timeoutMs = parsePositiveInt(settings.CLAUDE_MEM_SEARCH_RERANK_TIMEOUT_MS, 25, 500);
+
+  return {
+    enabled: settings.CLAUDE_MEM_SEARCH_RERANK_ENABLED === 'true',
+    candidates,
+    timeoutMs
+  };
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number, max: number): number {

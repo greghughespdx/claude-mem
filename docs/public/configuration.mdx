@@ -208,7 +208,7 @@ Semantic search can optionally rerank Chroma candidates with a dependency-free l
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `CLAUDE_MEM_SEARCH_RERANK_ENABLED` | `false` | Enable local lexical reranking for Chroma semantic search |
-| `CLAUDE_MEM_SEARCH_RERANK_CANDIDATES` | `50` | Number of Chroma candidates to hydrate before reranking (max 100) |
+| `CLAUDE_MEM_SEARCH_RERANK_CANDIDATES` | `50` | Number of Chroma candidates to hydrate before reranking. Capped at 100 (Chroma batch size); higher values are clamped silently. |
 | `CLAUDE_MEM_SEARCH_RERANK_TIMEOUT_MS` | `25` | Rerank time budget in milliseconds before falling back to Chroma order |
 
 The reranker uses token overlap, adjacent phrase boosts, field weighting, and Chroma rank as a stability prior. If reranking fails or exceeds the time budget, Claude-Mem keeps the original Chroma order.

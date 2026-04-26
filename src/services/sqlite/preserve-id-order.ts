@@ -5,8 +5,6 @@
  * callers pass IDs in Chroma relevance order, so hydration must explicitly
  * restore that order instead of falling back to timestamp sorting.
  */
-import { logger } from '../../utils/logger.js';
-
 export function preserveIdOrder<T extends { id: number }>(
   rows: T[],
   ids: number[],
