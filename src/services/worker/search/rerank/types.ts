@@ -27,3 +27,42 @@ export interface RerankScoredCandidate<T extends RerankableSearchResult = Rerank
   lexicalScore: number;
 }
 
+export interface ObservationFieldWeights {
+  title: number;
+  subtitle: number;
+  type: number;
+  concepts: number;
+  narrative: number;
+  facts: number;
+  text: number;
+  files: number;
+  project: number;
+}
+
+export interface SessionFieldWeights {
+  request: number;
+  learned: number;
+  completed: number;
+  investigated: number;
+  nextSteps: number;
+  notes: number;
+  files: number;
+  project: number;
+}
+
+export interface PromptFieldWeights {
+  promptText: number;
+  project: number;
+}
+
+export interface RerankFieldWeights {
+  observation: ObservationFieldWeights;
+  session: SessionFieldWeights;
+  prompt: PromptFieldWeights;
+}
+
+export interface RerankFieldWeightOverrides {
+  observation?: Partial<ObservationFieldWeights>;
+  session?: Partial<SessionFieldWeights>;
+  prompt?: Partial<PromptFieldWeights>;
+}

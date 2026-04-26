@@ -3,11 +3,44 @@ import type {
   SessionSummarySearchResult,
   UserPromptSearchResult
 } from '../types.js';
-import { logger } from '../../../../utils/logger.js';
-import type { RerankCandidate, RerankOptions, RerankScoredCandidate, RerankableSearchResult } from './types.js';
+import type {
+  RerankCandidate,
+  RerankFieldWeightOverrides,
+  RerankFieldWeights,
+  RerankOptions,
+  RerankScoredCandidate,
+  RerankableSearchResult
+} from './types.js';
 
 const TOKEN_RE = /[a-z0-9][a-z0-9_-]*/g;
 const DEFAULT_TIMEOUT_MS = 25;
+const DEFAULT_FIELD_WEIGHTS: RerankFieldWeights = {
+  observation: {
+    title: 1.8,
+    subtitle: 1.4,
+    type: 1.0,
+    concepts: 1.0,
+    narrative: 0.9,
+    facts: 0.9,
+    text: 0.8,
+    files: 0.5,
+    project: 0.4
+  },
+  session: {
+    request: 1.6,
+    learned: 1.2,
+    completed: 1.0,
+    investigated: 0.8,
+    nextSteps: 0.8,
+    notes: 0.6,
+    files: 0.4,
+    project: 0.4
+  },
+  prompt: {
+    promptText: 1.6,
+    project: 0.4
+  }
+};
 
 export class RerankTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -17,6 +50,16 @@ export class RerankTimeoutError extends Error {
 }
 
 export class LexicalSearchReranker {
+  private readonly weights: RerankFieldWeights;
+
+  constructor(weightOverrides: RerankFieldWeightOverrides = {}) {
+    this.weights = {
+      observation: { ...DEFAULT_FIELD_WEIGHTS.observation, ...weightOverrides.observation },
+      session: { ...DEFAULT_FIELD_WEIGHTS.session, ...weightOverrides.session },
+      prompt: { ...DEFAULT_FIELD_WEIGHTS.prompt, ...weightOverrides.prompt }
+    };
+  }
+
   rerank<T extends RerankableSearchResult>(
     query: string,
     candidates: RerankCandidate<T>[],
@@ -64,7 +107,7 @@ export class LexicalSearchReranker {
     queryPhrases: string[],
     candidateCount: number
   ): number {
-    const fields = extractWeightedFields(candidate.item);
+    const fields = extractWeightedFields(candidate.item, this.weights);
     let score = chromaPrior(candidate.chromaRank, candidateCount);
 
     for (const field of fields) {
@@ -111,40 +154,43 @@ function chromaPrior(rank: number, count: number): number {
   return 0.15 * (1 - rank / (count - 1));
 }
 
-function extractWeightedFields(item: RerankableSearchResult): Array<{ text?: string | null; weight: number }> {
+function extractWeightedFields(
+  item: RerankableSearchResult,
+  weights: RerankFieldWeights
+): Array<{ text?: string | null; weight: number }> {
   if ('prompt_text' in item) {
     return [
-      { text: item.prompt_text, weight: 1.6 },
-      { text: item.project, weight: 0.4 }
+      { text: item.prompt_text, weight: weights.prompt.promptText },
+      { text: item.project, weight: weights.prompt.project }
     ];
   }
 
   if ('request' in item) {
     const session = item as SessionSummarySearchResult;
     return [
-      { text: session.request, weight: 1.6 },
-      { text: session.learned, weight: 1.2 },
-      { text: session.completed, weight: 1.0 },
-      { text: session.investigated, weight: 0.8 },
-      { text: session.next_steps, weight: 0.8 },
-      { text: session.notes, weight: 0.6 },
-      { text: session.files_read, weight: 0.4 },
-      { text: session.files_edited, weight: 0.4 },
-      { text: session.project, weight: 0.4 }
+      { text: session.request, weight: weights.session.request },
+      { text: session.learned, weight: weights.session.learned },
+      { text: session.completed, weight: weights.session.completed },
+      { text: session.investigated, weight: weights.session.investigated },
+      { text: session.next_steps, weight: weights.session.nextSteps },
+      { text: session.notes, weight: weights.session.notes },
+      { text: session.files_read, weight: weights.session.files },
+      { text: session.files_edited, weight: weights.session.files },
+      { text: session.project, weight: weights.session.project }
     ];
   }
 
   const observation = item as ObservationSearchResult;
   return [
-    { text: observation.title, weight: 1.8 },
-    { text: observation.subtitle, weight: 1.4 },
-    { text: observation.type, weight: 1.0 },
-    { text: observation.concepts, weight: 1.0 },
-    { text: observation.narrative, weight: 0.9 },
-    { text: observation.facts, weight: 0.9 },
-    { text: observation.text, weight: 0.8 },
-    { text: observation.files_read, weight: 0.5 },
-    { text: observation.files_modified, weight: 0.5 },
-    { text: observation.project, weight: 0.4 }
+    { text: observation.title, weight: weights.observation.title },
+    { text: observation.subtitle, weight: weights.observation.subtitle },
+    { text: observation.type, weight: weights.observation.type },
+    { text: observation.concepts, weight: weights.observation.concepts },
+    { text: observation.narrative, weight: weights.observation.narrative },
+    { text: observation.facts, weight: weights.observation.facts },
+    { text: observation.text, weight: weights.observation.text },
+    { text: observation.files_read, weight: weights.observation.files },
+    { text: observation.files_modified, weight: weights.observation.files },
+    { text: observation.project, weight: weights.observation.project }
   ];
 }

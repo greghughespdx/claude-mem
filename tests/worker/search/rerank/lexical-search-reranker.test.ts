@@ -67,5 +67,33 @@ describe('LexicalSearchReranker', () => {
 
     expect(reranked.map(candidate => candidate.id)).toEqual([1, 2]);
   });
-});
 
+  it('supports benchmark-only field weight overrides', () => {
+    const candidates = [
+      {
+        id: 1,
+        type: 'observation' as const,
+        item: observation(1, 'Telegram polling failure', 'Generic deployment note'),
+        chromaRank: 0
+      },
+      {
+        id: 2,
+        type: 'observation' as const,
+        item: observation(2, 'Generic note', 'Telegram polling failure root cause'),
+        chromaRank: 1
+      }
+    ];
+
+    const defaultOrder = new LexicalSearchReranker()
+      .rerank('telegram polling failure', candidates)
+      .map(candidate => candidate.id);
+    const narrativeHeavyOrder = new LexicalSearchReranker({
+      observation: { title: 0.1, narrative: 3.0 }
+    })
+      .rerank('telegram polling failure', candidates)
+      .map(candidate => candidate.id);
+
+    expect(defaultOrder).toEqual([1, 2]);
+    expect(narrativeHeavyOrder).toEqual([2, 1]);
+  });
+});

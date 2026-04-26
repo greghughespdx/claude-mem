@@ -6,6 +6,7 @@
  * Examples:
  *   bun scripts/benchmark-lexical-rerank.ts --all-queries
  *   bun scripts/benchmark-lexical-rerank.ts "agent messaging protocol" --flashrank
+ *   bun scripts/benchmark-lexical-rerank.ts --judgments ./rerank-judgments.json --weight-scheme both
  *   bun scripts/benchmark-lexical-rerank.ts --judgments ./rerank-judgments.json --json
  */
 
@@ -15,6 +16,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { spawnSync } from 'child_process';
 import { LexicalSearchReranker } from '../src/services/worker/search/rerank/index.js';
+import type { RerankFieldWeightOverrides } from '../src/services/worker/search/rerank/index.js';
 import type { ObservationSearchResult } from '../src/services/worker/search/types.js';
 
 const DEFAULT_DB = join(homedir(), '.claude-mem', 'claude-mem.db');
@@ -30,9 +32,11 @@ const DEFAULT_QUERIES = [
 interface CliOptions {
   dbPath: string;
   queries: string[];
+  queriesExplicit: boolean;
   limit: number;
   flashrank: boolean;
   json: boolean;
+  weightScheme: WeightScheme;
   judgmentsPath?: string;
 }
 
@@ -50,13 +54,31 @@ interface RankingResult {
   latencyMs: number;
 }
 
+type WeightScheme = 'current' | 'narrative-heavy' | 'both';
+
+const NARRATIVE_HEAVY_WEIGHTS: RerankFieldWeightOverrides = {
+  observation: {
+    title: 0.8,
+    subtitle: 0.8,
+    type: 0.4,
+    concepts: 1.0,
+    narrative: 1.8,
+    facts: 1.4,
+    text: 1.2,
+    files: 0.5,
+    project: 0.4
+  }
+};
+
 function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     dbPath: DEFAULT_DB,
     queries: [],
+    queriesExplicit: false,
     limit: 20,
     flashrank: false,
-    json: false
+    json: false,
+    weightScheme: 'current'
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -67,18 +89,22 @@ function parseArgs(argv: string[]): CliOptions {
       options.limit = Number.parseInt(argv[++i], 10);
     } else if (arg === '--all-queries') {
       options.queries = [...DEFAULT_QUERIES];
+      options.queriesExplicit = true;
     } else if (arg === '--flashrank') {
       options.flashrank = true;
     } else if (arg === '--json') {
       options.json = true;
     } else if (arg === '--judgments') {
       options.judgmentsPath = argv[++i];
+    } else if (arg === '--weight-scheme') {
+      options.weightScheme = parseWeightScheme(argv[++i]);
     } else if (!arg.startsWith('--')) {
       options.queries.push(arg);
+      options.queriesExplicit = true;
     }
   }
 
-  if (options.queries.length === 0) {
+  if (options.queries.length === 0 && !options.judgmentsPath) {
     options.queries = [DEFAULT_QUERIES[0]];
   }
 
@@ -87,6 +113,13 @@ function parseArgs(argv: string[]): CliOptions {
   }
 
   return options;
+}
+
+function parseWeightScheme(value: string): WeightScheme {
+  if (value === 'current' || value === 'narrative-heavy' || value === 'both') {
+    return value;
+  }
+  throw new Error('--weight-scheme must be one of: current, narrative-heavy, both');
 }
 
 function loadJudgments(path?: string): JudgmentSet {
@@ -161,8 +194,12 @@ function likeSearch(db: Database, query: string, limit: number): ObservationCand
   return rows as ObservationCandidate[];
 }
 
-function runLexical(query: string, observations: ObservationCandidate[]): RankingResult {
-  const reranker = new LexicalSearchReranker();
+function runLexical(
+  query: string,
+  observations: ObservationCandidate[],
+  weightOverrides: RerankFieldWeightOverrides = {}
+): RankingResult {
+  const reranker = new LexicalSearchReranker(weightOverrides);
   const started = performance.now();
   const reranked = reranker.rerank(
     query,
@@ -249,6 +286,9 @@ function main(): void {
   }
 
   const judgments = loadJudgments(options.judgmentsPath);
+  if (!options.queriesExplicit && options.judgmentsPath) {
+    options.queries = Object.keys(judgments);
+  }
   const db = new Database(options.dbPath, { readonly: true });
   const report: any[] = [];
 
@@ -258,7 +298,12 @@ function main(): void {
       const observations = ftsSearch(db, query, options.limit);
       const searchMs = performance.now() - searchStarted;
       const baseline = observations.map(obs => obs.id);
-      const lexical = runLexical(query, observations);
+      const lexical = options.weightScheme !== 'narrative-heavy'
+        ? runLexical(query, observations)
+        : null;
+      const lexicalNarrativeHeavy = options.weightScheme !== 'current'
+        ? runLexical(query, observations, NARRATIVE_HEAVY_WEIGHTS)
+        : null;
       const flashrank = options.flashrank ? runFlashrank(query, observations) : null;
       const relevant = new Set(judgments[query] ?? []);
 
@@ -270,12 +315,18 @@ function main(): void {
           mrr_at_10: relevant.size ? reciprocalRank(baseline, relevant, 10) : null,
           recall_at_10: relevant.size ? recallAt(baseline, relevant, 10) : null
         },
-        lexical: {
+        lexical: lexical ? {
           latency_ms: Number(lexical.latencyMs.toFixed(1)),
           moves: summarizeMove(baseline, lexical.ids),
           mrr_at_10: relevant.size ? reciprocalRank(lexical.ids, relevant, 10) : null,
           recall_at_10: relevant.size ? recallAt(lexical.ids, relevant, 10) : null
-        },
+        } : null,
+        lexical_narrative_heavy: lexicalNarrativeHeavy ? {
+          latency_ms: Number(lexicalNarrativeHeavy.latencyMs.toFixed(1)),
+          moves: summarizeMove(baseline, lexicalNarrativeHeavy.ids),
+          mrr_at_10: relevant.size ? reciprocalRank(lexicalNarrativeHeavy.ids, relevant, 10) : null,
+          recall_at_10: relevant.size ? recallAt(lexicalNarrativeHeavy.ids, relevant, 10) : null
+        } : null,
         flashrank: flashrank ? {
           latency_ms: Number(flashrank.latencyMs.toFixed(1)),
           moves: summarizeMove(baseline, flashrank.ids),
@@ -297,15 +348,30 @@ function main(): void {
   for (const row of report) {
     console.log(`\nQuery: ${row.query}`);
     console.log(`  Results: ${row.results} | FTS: ${row.search_ms}ms`);
-    console.log(`  Lexical: ${row.lexical.latency_ms}ms | ${row.lexical.moves}`);
+    if (row.lexical) {
+      console.log(`  Lexical current: ${row.lexical.latency_ms}ms | ${row.lexical.moves}`);
+    }
+    if (row.lexical_narrative_heavy) {
+      console.log(`  Lexical narrative-heavy: ${row.lexical_narrative_heavy.latency_ms}ms | ${row.lexical_narrative_heavy.moves}`);
+    }
     if (row.flashrank) {
       console.log(`  Flashrank: ${row.flashrank.latency_ms}ms | ${row.flashrank.moves}`);
     } else if (options.flashrank) {
       console.log('  Flashrank: unavailable (install Python package `flashrank` to compare)');
     }
     if (row.baseline.mrr_at_10 !== null) {
-      console.log(`  MRR@10 baseline=${row.baseline.mrr_at_10.toFixed(3)} lexical=${row.lexical.mrr_at_10.toFixed(3)}`);
-      console.log(`  Recall@10 baseline=${row.baseline.recall_at_10.toFixed(3)} lexical=${row.lexical.recall_at_10.toFixed(3)}`);
+      const metrics = [`baseline=${row.baseline.mrr_at_10.toFixed(3)}`];
+      const recalls = [`baseline=${row.baseline.recall_at_10.toFixed(3)}`];
+      if (row.lexical) {
+        metrics.push(`current=${row.lexical.mrr_at_10.toFixed(3)}`);
+        recalls.push(`current=${row.lexical.recall_at_10.toFixed(3)}`);
+      }
+      if (row.lexical_narrative_heavy) {
+        metrics.push(`narrative-heavy=${row.lexical_narrative_heavy.mrr_at_10.toFixed(3)}`);
+        recalls.push(`narrative-heavy=${row.lexical_narrative_heavy.recall_at_10.toFixed(3)}`);
+      }
+      console.log(`  MRR@10 ${metrics.join(' ')}`);
+      console.log(`  Recall@10 ${recalls.join(' ')}`);
     }
   }
 }

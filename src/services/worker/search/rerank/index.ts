@@ -2,8 +2,9 @@ export { LexicalSearchReranker, RerankTimeoutError } from './LexicalSearchRerank
 export type {
   RerankCandidate,
   RerankDocumentType,
+  RerankFieldWeightOverrides,
+  RerankFieldWeights,
   RerankOptions,
   RerankScoredCandidate,
   RerankableSearchResult
 } from './types.js';
-
