@@ -16,6 +16,7 @@ import type { PendingMessageStore } from './PendingMessageStore.js';
 import { computeObservationContentHash, findDuplicateObservation } from './observations/store.js';
 import { parseFileList } from './observations/files.js';
 import { DEFAULT_PLATFORM_SOURCE, normalizePlatformSource, sortPlatformSources } from '../../shared/platform-source.js';
+import { preserveIdOrder } from './preserve-id-order.js';
 
 function resolveCreateSessionArgs(
   customTitle?: string,
@@ -1444,13 +1445,15 @@ export class SessionStore {
    */
   getObservationsByIds(
     ids: number[],
-    options: { orderBy?: 'date_desc' | 'date_asc'; limit?: number; project?: string; type?: string | string[]; concepts?: string | string[]; files?: string | string[] } = {}
+    options: { orderBy?: 'relevance' | 'date_desc' | 'date_asc'; limit?: number; project?: string; type?: string | string[]; concepts?: string | string[]; files?: string | string[] } = {}
   ): ObservationRecord[] {
     if (ids.length === 0) return [];
 
     const { orderBy = 'date_desc', limit, project, type, concepts, files } = options;
     const orderClause = orderBy === 'date_asc' ? 'ASC' : 'DESC';
-    const limitClause = limit ? `LIMIT ${limit}` : '';
+    const preserveRelevanceOrder = orderBy === 'relevance';
+    const orderByClause = preserveRelevanceOrder ? '' : `ORDER BY created_at_epoch ${orderClause}`;
+    const limitClause = !preserveRelevanceOrder && limit ? `LIMIT ${limit}` : '';
 
     // Build placeholders for IN clause
     const placeholders = ids.map(() => '?').join(',');
@@ -1505,11 +1508,12 @@ export class SessionStore {
       SELECT *
       FROM observations
       ${whereClause}
-      ORDER BY created_at_epoch ${orderClause}
+      ${orderByClause}
       ${limitClause}
     `);
 
-    return stmt.all(...params) as ObservationRecord[];
+    const rows = stmt.all(...params) as ObservationRecord[];
+    return preserveRelevanceOrder ? preserveIdOrder(rows, ids, limit) : rows;
   }
 
   /**
@@ -2188,13 +2192,15 @@ export class SessionStore {
    */
   getSessionSummariesByIds(
     ids: number[],
-    options: { orderBy?: 'date_desc' | 'date_asc'; limit?: number; project?: string } = {}
+    options: { orderBy?: 'relevance' | 'date_desc' | 'date_asc'; limit?: number; project?: string } = {}
   ): SessionSummaryRecord[] {
     if (ids.length === 0) return [];
 
     const { orderBy = 'date_desc', limit, project } = options;
     const orderClause = orderBy === 'date_asc' ? 'ASC' : 'DESC';
-    const limitClause = limit ? `LIMIT ${limit}` : '';
+    const preserveRelevanceOrder = orderBy === 'relevance';
+    const orderByClause = preserveRelevanceOrder ? '' : `ORDER BY created_at_epoch ${orderClause}`;
+    const limitClause = !preserveRelevanceOrder && limit ? `LIMIT ${limit}` : '';
     const placeholders = ids.map(() => '?').join(',');
     const params: any[] = [...ids];
 
@@ -2207,11 +2213,12 @@ export class SessionStore {
     const stmt = this.db.prepare(`
       SELECT * FROM session_summaries
       ${whereClause}
-      ORDER BY created_at_epoch ${orderClause}
+      ${orderByClause}
       ${limitClause}
     `);
 
-    return stmt.all(...params) as SessionSummaryRecord[];
+    const rows = stmt.all(...params) as SessionSummaryRecord[];
+    return preserveRelevanceOrder ? preserveIdOrder(rows, ids, limit) : rows;
   }
 
   /**
@@ -2220,13 +2227,15 @@ export class SessionStore {
    */
   getUserPromptsByIds(
     ids: number[],
-    options: { orderBy?: 'date_desc' | 'date_asc'; limit?: number; project?: string } = {}
+    options: { orderBy?: 'relevance' | 'date_desc' | 'date_asc'; limit?: number; project?: string } = {}
   ): UserPromptRecord[] {
     if (ids.length === 0) return [];
 
     const { orderBy = 'date_desc', limit, project } = options;
     const orderClause = orderBy === 'date_asc' ? 'ASC' : 'DESC';
-    const limitClause = limit ? `LIMIT ${limit}` : '';
+    const preserveRelevanceOrder = orderBy === 'relevance';
+    const orderByClause = preserveRelevanceOrder ? '' : `ORDER BY up.created_at_epoch ${orderClause}`;
+    const limitClause = !preserveRelevanceOrder && limit ? `LIMIT ${limit}` : '';
     const placeholders = ids.map(() => '?').join(',');
     const params: any[] = [...ids];
 
@@ -2242,11 +2251,12 @@ export class SessionStore {
       FROM user_prompts up
       JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
       WHERE up.id IN (${placeholders}) ${projectFilter}
-      ORDER BY up.created_at_epoch ${orderClause}
+      ${orderByClause}
       ${limitClause}
     `);
 
-    return stmt.all(...params) as UserPromptRecord[];
+    const rows = stmt.all(...params) as UserPromptRecord[];
+    return preserveRelevanceOrder ? preserveIdOrder(rows, ids, limit) : rows;
   }
 
   /**

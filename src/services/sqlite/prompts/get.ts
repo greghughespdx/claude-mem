@@ -6,6 +6,7 @@ import type { Database } from 'bun:sqlite';
 import { logger } from '../../../utils/logger.js';
 import type { UserPromptRecord, LatestPromptResult } from '../../../types/database.js';
 import type { RecentUserPromptResult, PromptWithProject, GetPromptsByIdsOptions } from './types.js';
+import { preserveIdOrder } from '../preserve-id-order.js';
 
 /**
  * Get user prompt by session ID and prompt number
@@ -146,7 +147,9 @@ export function getUserPromptsByIds(
 
   const { orderBy = 'date_desc', limit, project } = options;
   const orderClause = orderBy === 'date_asc' ? 'ASC' : 'DESC';
-  const limitClause = limit ? `LIMIT ${limit}` : '';
+  const preserveRelevanceOrder = orderBy === 'relevance';
+  const orderByClause = preserveRelevanceOrder ? '' : `ORDER BY up.created_at_epoch ${orderClause}`;
+  const limitClause = !preserveRelevanceOrder && limit ? `LIMIT ${limit}` : '';
   const placeholders = ids.map(() => '?').join(',');
   const params: (number | string)[] = [...ids];
 
@@ -161,9 +164,10 @@ export function getUserPromptsByIds(
     FROM user_prompts up
     JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
     WHERE up.id IN (${placeholders}) ${projectFilter}
-    ORDER BY up.created_at_epoch ${orderClause}
+    ${orderByClause}
     ${limitClause}
   `);
 
-  return stmt.all(...params) as UserPromptRecord[];
+  const rows = stmt.all(...params) as UserPromptRecord[];
+  return preserveRelevanceOrder ? preserveIdOrder(rows, ids, limit) : rows;
 }

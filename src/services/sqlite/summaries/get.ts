@@ -5,6 +5,7 @@ import type { Database } from 'bun:sqlite';
 import { logger } from '../../../utils/logger.js';
 import type { SessionSummaryRecord } from '../../../types/database.js';
 import type { SessionSummary, GetByIdsOptions } from './types.js';
+import { preserveIdOrder } from '../preserve-id-order.js';
 
 /**
  * Get summary for a specific session
@@ -66,7 +67,9 @@ export function getSummariesByIds(
 
   const { orderBy = 'date_desc', limit, project } = options;
   const orderClause = orderBy === 'date_asc' ? 'ASC' : 'DESC';
-  const limitClause = limit ? `LIMIT ${limit}` : '';
+  const preserveRelevanceOrder = orderBy === 'relevance';
+  const orderByClause = preserveRelevanceOrder ? '' : `ORDER BY created_at_epoch ${orderClause}`;
+  const limitClause = !preserveRelevanceOrder && limit ? `LIMIT ${limit}` : '';
   const placeholders = ids.map(() => '?').join(',');
   const params: (number | string)[] = [...ids];
 
@@ -79,9 +82,10 @@ export function getSummariesByIds(
   const stmt = db.prepare(`
     SELECT * FROM session_summaries
     ${whereClause}
-    ORDER BY created_at_epoch ${orderClause}
+    ${orderByClause}
     ${limitClause}
   `);
 
-  return stmt.all(...params) as SessionSummaryRecord[];
+  const rows = stmt.all(...params) as SessionSummaryRecord[];
+  return preserveRelevanceOrder ? preserveIdOrder(rows, ids, limit) : rows;
 }

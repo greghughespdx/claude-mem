@@ -201,6 +201,18 @@ Search operations are provided via:
 - **HTTP API**: 10 endpoints on worker service port 37777
 - **Auto-Invocation**: Claude recognizes natural language queries about past work
 
+### Optional Search Reranking
+
+Semantic search can optionally rerank Chroma candidates with a dependency-free local lexical scorer. This is disabled by default; when disabled, results preserve Chroma relevance order.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `CLAUDE_MEM_SEARCH_RERANK_ENABLED` | `false` | Enable local lexical reranking for Chroma semantic search |
+| `CLAUDE_MEM_SEARCH_RERANK_CANDIDATES` | `50` | Number of Chroma candidates to hydrate before reranking (max 100) |
+| `CLAUDE_MEM_SEARCH_RERANK_TIMEOUT_MS` | `25` | Rerank time budget in milliseconds before falling back to Chroma order |
+
+The reranker uses token overlap, adjacent phrase boosts, field weighting, and Chroma rank as a stability prior. If reranking fails or exceeds the time budget, Claude-Mem keeps the original Chroma order.
+
 ## Version Channel
 
 Claude-Mem supports switching between stable and beta versions via the web viewer UI.

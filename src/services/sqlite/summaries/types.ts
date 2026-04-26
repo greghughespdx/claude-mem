@@ -92,7 +92,7 @@ export interface FullSummary {
  * Options for getByIds query
  */
 export interface GetByIdsOptions {
-  orderBy?: 'date_desc' | 'date_asc';
+  orderBy?: 'relevance' | 'date_desc' | 'date_asc';
   limit?: number;
   project?: string;
 }

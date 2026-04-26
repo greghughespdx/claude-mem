@@ -17,6 +17,8 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { SettingsDefaultsManager } from '../../src/shared/SettingsDefaultsManager.js';
 
+const expectedWorkerPort = String(37700 + ((process.getuid?.() ?? 77) % 100));
+
 describe('SettingsDefaultsManager', () => {
   let tempDir: string;
   let settingsPath: string;
@@ -73,6 +75,14 @@ describe('SettingsDefaultsManager', () => {
         for (const key of Object.keys(defaults)) {
           expect(parsed).toHaveProperty(key);
         }
+      });
+
+      it('should default search reranking off with bounded local settings', () => {
+        const defaults = SettingsDefaultsManager.getAllDefaults();
+
+        expect(defaults.CLAUDE_MEM_SEARCH_RERANK_ENABLED).toBe('false');
+        expect(defaults.CLAUDE_MEM_SEARCH_RERANK_CANDIDATES).toBe('50');
+        expect(defaults.CLAUDE_MEM_SEARCH_RERANK_TIMEOUT_MS).toBe('25');
       });
     });
 
@@ -310,13 +320,13 @@ describe('SettingsDefaultsManager', () => {
   describe('get', () => {
     it('should return default value for key', () => {
       expect(SettingsDefaultsManager.get('CLAUDE_MEM_MODEL')).toBe('claude-sonnet-4-6');
-      expect(SettingsDefaultsManager.get('CLAUDE_MEM_WORKER_PORT')).toBe('37777');
+      expect(SettingsDefaultsManager.get('CLAUDE_MEM_WORKER_PORT')).toBe(expectedWorkerPort);
     });
   });
 
   describe('getInt', () => {
     it('should return integer value for numeric string', () => {
-      expect(SettingsDefaultsManager.getInt('CLAUDE_MEM_WORKER_PORT')).toBe(37777);
+      expect(SettingsDefaultsManager.getInt('CLAUDE_MEM_WORKER_PORT')).toBe(Number(expectedWorkerPort));
       expect(SettingsDefaultsManager.getInt('CLAUDE_MEM_CONTEXT_OBSERVATIONS')).toBe(50);
     });
   });
@@ -438,9 +448,9 @@ describe('SettingsDefaultsManager', () => {
       const result = SettingsDefaultsManager.loadFromFile(settingsPath);
 
       // Priority check:
-      // Default is 37777, file is 22222, env is 33333
+      // Default is UID-derived, file is 22222, env is 33333
       // Result should be env (33333) because env > file > default
-      expect(defaults.CLAUDE_MEM_WORKER_PORT).toBe('37777'); // Confirm default
+      expect(defaults.CLAUDE_MEM_WORKER_PORT).toBe(expectedWorkerPort); // Confirm default
       expect(result.CLAUDE_MEM_WORKER_PORT).toBe('33333'); // Env wins
     });
   });

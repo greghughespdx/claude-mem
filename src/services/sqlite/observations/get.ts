@@ -7,6 +7,7 @@ import { Database } from 'bun:sqlite';
 import { logger } from '../../../utils/logger.js';
 import type { ObservationRecord } from '../../../types/database.js';
 import type { GetObservationsByIdsOptions, ObservationSessionRow } from './types.js';
+import { preserveIdOrder } from '../preserve-id-order.js';
 
 /**
  * Get a single observation by ID
@@ -33,7 +34,9 @@ export function getObservationsByIds(
 
   const { orderBy = 'date_desc', limit, project, type, concepts, files } = options;
   const orderClause = orderBy === 'date_asc' ? 'ASC' : 'DESC';
-  const limitClause = limit ? `LIMIT ${limit}` : '';
+  const preserveRelevanceOrder = orderBy === 'relevance';
+  const orderByClause = preserveRelevanceOrder ? '' : `ORDER BY created_at_epoch ${orderClause}`;
+  const limitClause = !preserveRelevanceOrder && limit ? `LIMIT ${limit}` : '';
 
   // Build placeholders for IN clause
   const placeholders = ids.map(() => '?').join(',');
@@ -88,11 +91,12 @@ export function getObservationsByIds(
     SELECT *
     FROM observations
     ${whereClause}
-    ORDER BY created_at_epoch ${orderClause}
+    ${orderByClause}
     ${limitClause}
   `);
 
-  return stmt.all(...params) as ObservationRecord[];
+  const rows = stmt.all(...params) as ObservationRecord[];
+  return preserveRelevanceOrder ? preserveIdOrder(rows, ids, limit) : rows;
 }
 
 /**

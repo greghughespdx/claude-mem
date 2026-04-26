@@ -146,6 +146,21 @@ describe('ChromaSearchStrategy', () => {
       expect(result.results.observations).toHaveLength(1);
     });
 
+    it('should hydrate semantic results in Chroma relevance order by default', async () => {
+      const options: StrategySearchOptions = {
+        query: 'test query',
+        searchType: 'observations',
+        limit: 10
+      };
+
+      await strategy.search(options);
+
+      expect(mockSessionStore.getObservationsByIds).toHaveBeenCalledWith(
+        [1],
+        expect.objectContaining({ orderBy: 'relevance', limit: 10 })
+      );
+    });
+
     it('should hydrate sessions from SQLite', async () => {
       const options: StrategySearchOptions = {
         query: 'test query',
@@ -421,6 +436,75 @@ describe('ChromaSearchStrategy', () => {
       expect(mockSessionStore.getObservationsByIds).toHaveBeenCalled();
       const calledWith = mockSessionStore.getObservationsByIds.mock.calls[0][0];
       expect(calledWith).toEqual([100]);
+    });
+
+    it('should rerank hydrated candidates when lexical reranking is enabled', async () => {
+      strategy = new ChromaSearchStrategy(mockChromaSync, mockSessionStore, undefined, {
+        enabled: true,
+        candidates: 50,
+        timeoutMs: 25
+      });
+
+      const recentEpoch = Date.now() - 1000 * 60 * 60 * 24;
+      mockChromaSync.queryChroma = mock(() => Promise.resolve({
+        ids: [1, 2],
+        distances: [0.1, 0.2],
+        metadatas: [
+          { sqlite_id: 1, doc_type: 'observation', created_at_epoch: recentEpoch },
+          { sqlite_id: 2, doc_type: 'observation', created_at_epoch: recentEpoch }
+        ]
+      }));
+      mockSessionStore.getObservationsByIds = mock(() => [
+        { ...mockObservation, id: 1, title: 'General deployment note', narrative: 'Release checklist' },
+        { ...mockObservation, id: 2, title: 'Telegram getUpdates polling failure', narrative: 'Bot slot was stolen' }
+      ]);
+
+      const result = await strategy.search({
+        query: 'telegram getUpdates polling',
+        searchType: 'observations',
+        limit: 2
+      });
+
+      expect(mockChromaSync.queryChroma).toHaveBeenCalledWith(
+        'telegram getUpdates polling',
+        50,
+        { doc_type: 'observation' }
+      );
+      expect(result.results.observations.map(obs => obs.id)).toEqual([2, 1]);
+    });
+
+    it('should preserve Chroma order when lexical reranking fails', async () => {
+      const failingReranker = {
+        rerank: mock(() => {
+          throw new Error('reranker exploded');
+        })
+      };
+      strategy = new ChromaSearchStrategy(mockChromaSync, mockSessionStore, failingReranker as any, {
+        enabled: true,
+        candidates: 50,
+        timeoutMs: 25
+      });
+
+      mockChromaSync.queryChroma = mock(() => Promise.resolve({
+        ids: [1, 2],
+        distances: [0.1, 0.2],
+        metadatas: [
+          { sqlite_id: 1, doc_type: 'observation', created_at_epoch: Date.now() },
+          { sqlite_id: 2, doc_type: 'observation', created_at_epoch: Date.now() }
+        ]
+      }));
+      mockSessionStore.getObservationsByIds = mock(() => [
+        { ...mockObservation, id: 1 },
+        { ...mockObservation, id: 2 }
+      ]);
+
+      const result = await strategy.search({
+        query: 'test query',
+        searchType: 'observations',
+        limit: 2
+      });
+
+      expect(result.results.observations.map(obs => obs.id)).toEqual([1, 2]);
     });
   });
 

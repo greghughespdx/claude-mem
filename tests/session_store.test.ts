@@ -118,4 +118,89 @@ describe('SessionStore', () => {
     expect(stored).not.toBeNull();
     expect(stored?.created_at_epoch).toBe(pastTimestamp);
   });
+
+  it('should preserve input ID order when hydrating observations by relevance', () => {
+    const sdkId = store.createSDKSession('claude-sess-relevance-obs', 'test-project', 'initial prompt');
+    store.updateMemorySessionId(sdkId, 'memory-sess-relevance-obs');
+
+    const createObservation = (title: string, timestamp: number) => store.storeObservation(
+      'memory-sess-relevance-obs',
+      'test-project',
+      {
+        type: 'discovery',
+        title,
+        subtitle: null,
+        facts: [],
+        narrative: title,
+        concepts: [],
+        files_read: [],
+        files_modified: []
+      },
+      1,
+      0,
+      timestamp
+    ).id;
+
+    const oldest = createObservation('oldest', 1000);
+    const newest = createObservation('newest', 3000);
+    const middle = createObservation('middle', 2000);
+
+    const rows = store.getObservationsByIds([oldest, newest, middle], {
+      orderBy: 'relevance',
+      limit: 2
+    });
+
+    expect(rows.map(row => row.id)).toEqual([oldest, newest]);
+  });
+
+  it('should preserve input ID order when hydrating session summaries by relevance', () => {
+    const sdkId = store.createSDKSession('claude-sess-relevance-summary', 'test-project', 'initial prompt');
+    store.updateMemorySessionId(sdkId, 'memory-sess-relevance-summary');
+
+    const createSummary = (request: string, timestamp: number) => store.storeSummary(
+      'memory-sess-relevance-summary',
+      'test-project',
+      {
+        request,
+        investigated: '',
+        learned: '',
+        completed: '',
+        next_steps: '',
+        notes: null
+      },
+      1,
+      0,
+      timestamp
+    ).id;
+
+    const oldest = createSummary('oldest', 1000);
+    const newest = createSummary('newest', 3000);
+    const middle = createSummary('middle', 2000);
+
+    const rows = store.getSessionSummariesByIds([oldest, newest, middle], {
+      orderBy: 'relevance',
+      limit: 2
+    });
+
+    expect(rows.map(row => row.id)).toEqual([oldest, newest]);
+  });
+
+  it('should preserve input ID order when hydrating user prompts by relevance', () => {
+    store.createSDKSession('claude-sess-relevance-prompt', 'test-project', 'initial prompt');
+
+    const first = store.saveUserPrompt('claude-sess-relevance-prompt', 1, 'first');
+    const second = store.saveUserPrompt('claude-sess-relevance-prompt', 2, 'second');
+    const third = store.saveUserPrompt('claude-sess-relevance-prompt', 3, 'third');
+
+    store.db.prepare('UPDATE user_prompts SET created_at_epoch = ? WHERE id = ?').run(1000, first);
+    store.db.prepare('UPDATE user_prompts SET created_at_epoch = ? WHERE id = ?').run(3000, second);
+    store.db.prepare('UPDATE user_prompts SET created_at_epoch = ? WHERE id = ?').run(2000, third);
+
+    const rows = store.getUserPromptsByIds([first, second, third], {
+      orderBy: 'relevance',
+      limit: 2
+    });
+
+    expect(rows.map(row => row.id)).toEqual([first, second]);
+  });
 });

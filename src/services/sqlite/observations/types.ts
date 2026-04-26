@@ -33,7 +33,7 @@ export interface StoreObservationResult {
  * Options for getObservationsByIds
  */
 export interface GetObservationsByIdsOptions {
-  orderBy?: 'date_desc' | 'date_asc';
+  orderBy?: 'relevance' | 'date_desc' | 'date_asc';
   limit?: number;
   project?: string;
   type?: string | string[];

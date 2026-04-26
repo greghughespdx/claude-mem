@@ -23,13 +23,25 @@ import {
 import { ChromaSync } from '../../../sync/ChromaSync.js';
 import { SessionStore } from '../../../sqlite/SessionStore.js';
 import { logger } from '../../../../utils/logger.js';
+import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
+import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
+import { LexicalSearchReranker } from '../rerank/index.js';
+import type { RerankCandidate, RerankDocumentType, RerankableSearchResult } from '../rerank/index.js';
+
+interface RerankConfig {
+  enabled: boolean;
+  candidates: number;
+  timeoutMs: number;
+}
 
 export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchStrategy {
   readonly name = 'chroma';
 
   constructor(
     private chromaSync: ChromaSync,
-    private sessionStore: SessionStore
+    private sessionStore: SessionStore,
+    private reranker: LexicalSearchReranker = new LexicalSearchReranker(),
+    private rerankConfigOverride?: RerankConfig
   ) {
     super();
   }
@@ -48,7 +60,7 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
       files,
       limit = SEARCH_CONSTANTS.DEFAULT_LIMIT,
       project,
-      orderBy = 'date_desc'
+      orderBy = 'relevance'
     } = options;
 
     if (!query) {
@@ -101,9 +113,14 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
       project?: string;
     }
   ): Promise<StrategySearchResult> {
+    const rerankConfig = this.loadRerankConfig();
+    const candidateLimit = rerankConfig.enabled
+      ? Math.max(options.limit, Math.min(rerankConfig.candidates, SEARCH_CONSTANTS.CHROMA_BATCH_SIZE))
+      : SEARCH_CONSTANTS.CHROMA_BATCH_SIZE;
+
     const chromaResults = await this.chromaSync.queryChroma(
       query,
-      SEARCH_CONSTANTS.CHROMA_BATCH_SIZE,
+      candidateLimit,
       whereFilter
     );
 
@@ -118,26 +135,38 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
 
     const recentItems = this.filterByRecency(chromaResults);
     const categorized = this.categorizeByDocType(recentItems, options);
+    const chromaRankByKey = this.buildChromaRankMap(recentItems);
+    const hydrationLimit = rerankConfig.enabled ? candidateLimit : options.limit;
 
     let observations: ObservationSearchResult[] = [];
     let sessions: SessionSummarySearchResult[] = [];
     let prompts: UserPromptSearchResult[] = [];
 
     if (categorized.obsIds.length > 0) {
-      const obsOptions = { type: options.obsType, concepts: options.concepts, files: options.files, orderBy: options.orderBy, limit: options.limit, project: options.project };
+      const obsOptions = { type: options.obsType, concepts: options.concepts, files: options.files, orderBy: options.orderBy, limit: hydrationLimit, project: options.project };
       observations = this.sessionStore.getObservationsByIds(categorized.obsIds, obsOptions);
     }
 
     if (categorized.sessionIds.length > 0) {
       sessions = this.sessionStore.getSessionSummariesByIds(categorized.sessionIds, {
-        orderBy: options.orderBy, limit: options.limit, project: options.project
+        orderBy: options.orderBy, limit: hydrationLimit, project: options.project
       });
     }
 
     if (categorized.promptIds.length > 0) {
       prompts = this.sessionStore.getUserPromptsByIds(categorized.promptIds, {
-        orderBy: options.orderBy, limit: options.limit, project: options.project
+        orderBy: options.orderBy, limit: hydrationLimit, project: options.project
       });
+    }
+
+    if (rerankConfig.enabled && options.orderBy === 'relevance') {
+      ({ observations, sessions, prompts } = this.rerankResultsSafely(
+        query,
+        chromaRankByKey,
+        { observations, sessions, prompts },
+        rerankConfig,
+        options.limit
+      ));
     }
 
     return {
@@ -244,4 +273,105 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
 
     return { obsIds, sessionIds, promptIds };
   }
+
+  private loadRerankConfig(): RerankConfig {
+    if (this.rerankConfigOverride) {
+      return this.rerankConfigOverride;
+    }
+
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const candidates = parsePositiveInt(
+      settings.CLAUDE_MEM_SEARCH_RERANK_CANDIDATES,
+      50,
+      SEARCH_CONSTANTS.CHROMA_BATCH_SIZE
+    );
+    const timeoutMs = parsePositiveInt(settings.CLAUDE_MEM_SEARCH_RERANK_TIMEOUT_MS, 25, 500);
+
+    return {
+      enabled: settings.CLAUDE_MEM_SEARCH_RERANK_ENABLED === 'true',
+      candidates,
+      timeoutMs
+    };
+  }
+
+  private buildChromaRankMap(items: Array<{ id: number; meta: ChromaMetadata }>): Map<string, number> {
+    const ranks = new Map<string, number>();
+    items.forEach((item, index) => {
+      const type = this.toRerankDocumentType(item.meta.doc_type);
+      ranks.set(this.rankKey(type, item.id), index);
+    });
+    return ranks;
+  }
+
+  private rerankResultsSafely(
+    query: string,
+    chromaRankByKey: Map<string, number>,
+    results: {
+      observations: ObservationSearchResult[];
+      sessions: SessionSummarySearchResult[];
+      prompts: UserPromptSearchResult[];
+    },
+    config: RerankConfig,
+    limit: number
+  ): {
+    observations: ObservationSearchResult[];
+    sessions: SessionSummarySearchResult[];
+    prompts: UserPromptSearchResult[];
+  } {
+    try {
+      return {
+        observations: this.rerankGroup(query, 'observation', results.observations, chromaRankByKey, config, limit),
+        sessions: this.rerankGroup(query, 'session', results.sessions, chromaRankByKey, config, limit),
+        prompts: this.rerankGroup(query, 'prompt', results.prompts, chromaRankByKey, config, limit)
+      };
+    } catch (error) {
+      const errorObj = error instanceof Error ? error : new Error(String(error));
+      logger.warn('SEARCH', 'ChromaSearchStrategy: Lexical rerank failed, preserving Chroma order', {
+        error: errorObj.message
+      });
+      return results;
+    }
+  }
+
+  private rerankGroup<T extends RerankableSearchResult>(
+    query: string,
+    type: RerankDocumentType,
+    items: T[],
+    chromaRankByKey: Map<string, number>,
+    config: RerankConfig,
+    limit: number
+  ): T[] {
+    const candidates: RerankCandidate<T>[] = items.map((item, index) => ({
+      id: item.id,
+      type,
+      item,
+      chromaRank: chromaRankByKey.get(this.rankKey(type, item.id)) ?? index
+    }));
+
+    return this.reranker
+      .rerank(query, candidates, { timeoutMs: config.timeoutMs })
+      .slice(0, limit)
+      .map(candidate => candidate.item);
+  }
+
+  private toRerankDocumentType(docType: ChromaMetadata['doc_type']): RerankDocumentType {
+    switch (docType) {
+      case 'session_summary':
+        return 'session';
+      case 'user_prompt':
+        return 'prompt';
+      default:
+        return 'observation';
+    }
+  }
+
+  private rankKey(type: RerankDocumentType, id: number): string {
+    return `${type}:${id}`;
+  }
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number, max: number): number {
+  const parsed = Number.parseInt(value ?? '', 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, max);
 }
