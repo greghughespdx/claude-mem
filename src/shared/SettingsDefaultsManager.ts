@@ -61,7 +61,9 @@ export interface SettingsDefaults {
   CLAUDE_MEM_EXCLUDED_PROJECTS: string;  // Comma-separated glob patterns for excluded project paths
   CLAUDE_MEM_FOLDER_MD_EXCLUDE: string;  // JSON array of folder paths to exclude from CLAUDE.md generation
   // Prompt Filtering
-  CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: string;  // Comma-separated substrings; prompts containing any are not stored (default: '')
+  CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: string;
+  // Session age guardrail
+  CLAUDE_MEM_SESSION_MAX_AGE_HOURS: string;  // Hours; sessions older than this are aborted by SessionRoutes (default: '168')  // Comma-separated substrings; prompts containing any are not stored (default: '')
   // Semantic Context Injection (per-prompt via Chroma)
   CLAUDE_MEM_SEMANTIC_INJECT: string;        // 'true' | 'false' - inject relevant observations on each prompt
   CLAUDE_MEM_SEMANTIC_INJECT_LIMIT: string;  // Max observations to inject per prompt
@@ -140,7 +142,8 @@ export class SettingsDefaultsManager {
     // Exclusion Settings
     CLAUDE_MEM_EXCLUDED_PROJECTS: '',  // Comma-separated glob patterns for excluded project paths
     CLAUDE_MEM_FOLDER_MD_EXCLUDE: '[]',
-    CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: '',  // JSON array of folder paths to exclude from CLAUDE.md generation
+    CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: '',
+    CLAUDE_MEM_SESSION_MAX_AGE_HOURS: '168',  // JSON array of folder paths to exclude from CLAUDE.md generation
     // Semantic Context Injection (per-prompt via Chroma vector search)
     CLAUDE_MEM_SEMANTIC_INJECT: 'false',             // Inject relevant past observations on every UserPromptSubmit (experimental, disabled by default)
     CLAUDE_MEM_SEMANTIC_INJECT_LIMIT: '5',           // Top-N most relevant observations to inject per prompt

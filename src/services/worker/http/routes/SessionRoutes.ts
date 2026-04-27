@@ -106,7 +106,14 @@ export class SessionRoutes extends BaseRouteHandler {
   // still bounded. We deliberately do NOT expose this as a config knob: a
   // session approaching this age is almost certainly a bug worth investigating,
   // not a knob worth tuning.
-  private static readonly MAX_SESSION_WALL_CLOCK_MS = 24 * 60 * 60 * 1000; // 24 hours (#1590, #2127)
+  private static readonly MAX_SESSION_WALL_CLOCK_MS = (() => {
+    // Configurable via CLAUDE_MEM_SESSION_MAX_AGE_HOURS (default 168h / 1 week).
+    // Upstream hardcodes 24h (#1590, #2127); we raise it to support long
+    // workstation-style sessions where context survives multiple work blocks.
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const hours = parseFloat(settings.CLAUDE_MEM_SESSION_MAX_AGE_HOURS);
+    return (isNaN(hours) || hours <= 0 ? 168 : hours) * 60 * 60 * 1000;
+  })();
 
   public ensureGeneratorRunning(sessionDbId: number, source: string): void {
     const session = this.sessionManager.getSession(sessionDbId);
