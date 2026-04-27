@@ -60,6 +60,7 @@ export interface SettingsDefaults {
   // Exclusion Settings
   CLAUDE_MEM_EXCLUDED_PROJECTS: string;  // Comma-separated glob patterns for excluded project paths
   CLAUDE_MEM_FOLDER_MD_EXCLUDE: string;  // JSON array of folder paths to exclude from CLAUDE.md generation
+<<<<<<< HEAD
   // Semantic Context Injection (per-prompt via Chroma)
   CLAUDE_MEM_SEMANTIC_INJECT: string;        // 'true' | 'false' - inject relevant observations on each prompt
   CLAUDE_MEM_SEMANTIC_INJECT_LIMIT: string;  // Max observations to inject per prompt
@@ -67,6 +68,12 @@ export interface SettingsDefaults {
   CLAUDE_MEM_TIER_ROUTING_ENABLED: string;   // 'true' | 'false' - enable model tier routing
   CLAUDE_MEM_TIER_SIMPLE_MODEL: string;      // Tier alias or model ID for simple tool observations (Read, Glob, Grep)
   CLAUDE_MEM_TIER_SUMMARY_MODEL: string;     // Tier alias or model ID for session summaries
+=======
+  // Session Init Deduplication
+  CLAUDE_MEM_SESSION_INIT_DEDUP: string;  // 'true' | 'false' - deduplicate session-init per contentSessionId (default: true)
+  // Prompt Filtering
+  CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: string;  // Comma-separated substrings; prompts containing any are not stored (default: '')
+>>>>>>> fd6c2c85 (feat: add CLAUDE_MEM_IGNORE_PROMPT_PATTERNS setting to filter prompts)
   // Chroma Vector Database Configuration
   CLAUDE_MEM_CHROMA_ENABLED: string;   // 'true' | 'false' - set to 'false' for SQLite-only mode
   CLAUDE_MEM_CHROMA_MODE: string;      // 'local' | 'remote'
@@ -138,6 +145,7 @@ export class SettingsDefaultsManager {
     // Exclusion Settings
     CLAUDE_MEM_EXCLUDED_PROJECTS: '',  // Comma-separated glob patterns for excluded project paths
     CLAUDE_MEM_FOLDER_MD_EXCLUDE: '[]',  // JSON array of folder paths to exclude from CLAUDE.md generation
+<<<<<<< HEAD
     // Semantic Context Injection (per-prompt via Chroma vector search)
     CLAUDE_MEM_SEMANTIC_INJECT: 'false',             // Inject relevant past observations on every UserPromptSubmit (experimental, disabled by default)
     CLAUDE_MEM_SEMANTIC_INJECT_LIMIT: '5',           // Top-N most relevant observations to inject per prompt
@@ -145,6 +153,12 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_TIER_ROUTING_ENABLED: 'true',         // Route observations to models by complexity
     CLAUDE_MEM_TIER_SIMPLE_MODEL: 'haiku', // Portable tier alias — works across Direct API, Bedrock, Vertex, Azure (see #1463)
     CLAUDE_MEM_TIER_SUMMARY_MODEL: '',                // Empty = use default model for summaries
+=======
+    // Session Init Deduplication
+    CLAUDE_MEM_SESSION_INIT_DEDUP: 'true',  // Deduplicate session-init per contentSessionId
+    // Prompt Filtering
+    CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: '',  // Comma-separated substrings; prompts containing any are not stored
+>>>>>>> fd6c2c85 (feat: add CLAUDE_MEM_IGNORE_PROMPT_PATTERNS setting to filter prompts)
     // Chroma Vector Database Configuration
     CLAUDE_MEM_CHROMA_ENABLED: 'true',         // Set to 'false' to disable Chroma and use SQLite-only search
     CLAUDE_MEM_CHROMA_MODE: 'local',           // 'local' uses persistent chroma-mcp via uvx, 'remote' connects to existing server
