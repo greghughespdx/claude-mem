@@ -60,6 +60,8 @@ export interface SettingsDefaults {
   // Exclusion Settings
   CLAUDE_MEM_EXCLUDED_PROJECTS: string;  // Comma-separated glob patterns for excluded project paths
   CLAUDE_MEM_FOLDER_MD_EXCLUDE: string;  // JSON array of folder paths to exclude from CLAUDE.md generation
+  // Prompt Filtering
+  CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: string;  // Comma-separated substrings; prompts containing any are not stored (default: '')
   // Semantic Context Injection (per-prompt via Chroma)
   CLAUDE_MEM_SEMANTIC_INJECT: string;        // 'true' | 'false' - inject relevant observations on each prompt
   CLAUDE_MEM_SEMANTIC_INJECT_LIMIT: string;  // Max observations to inject per prompt
@@ -137,7 +139,8 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_HOOK_FAIL_LOUD_THRESHOLD: '3',  // Plan 05 Phase 8 — escalate to exit code 2 after N consecutive worker-unreachable hook invocations
     // Exclusion Settings
     CLAUDE_MEM_EXCLUDED_PROJECTS: '',  // Comma-separated glob patterns for excluded project paths
-    CLAUDE_MEM_FOLDER_MD_EXCLUDE: '[]',  // JSON array of folder paths to exclude from CLAUDE.md generation
+    CLAUDE_MEM_FOLDER_MD_EXCLUDE: '[]',
+    CLAUDE_MEM_IGNORE_PROMPT_PATTERNS: '',  // JSON array of folder paths to exclude from CLAUDE.md generation
     // Semantic Context Injection (per-prompt via Chroma vector search)
     CLAUDE_MEM_SEMANTIC_INJECT: 'false',             // Inject relevant past observations on every UserPromptSubmit (experimental, disabled by default)
     CLAUDE_MEM_SEMANTIC_INJECT_LIMIT: '5',           // Top-N most relevant observations to inject per prompt
