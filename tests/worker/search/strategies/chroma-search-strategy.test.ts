@@ -145,6 +145,21 @@ describe('ChromaSearchStrategy', () => {
       expect(result.results.observations).toHaveLength(1);
     });
 
+    it('should hydrate semantic results in Chroma relevance order by default', async () => {
+      const options: StrategySearchOptions = {
+        query: 'test query',
+        searchType: 'observations',
+        limit: 10
+      };
+
+      await strategy.search(options);
+
+      expect(mockSessionStore.getObservationsByIds).toHaveBeenCalledWith(
+        [1],
+        expect.objectContaining({ orderBy: 'relevance', limit: 10 })
+      );
+    });
+
     it('should hydrate sessions from SQLite', async () => {
       const options: StrategySearchOptions = {
         query: 'test query',

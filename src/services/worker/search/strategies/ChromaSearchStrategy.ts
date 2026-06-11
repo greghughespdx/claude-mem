@@ -48,7 +48,7 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
       files,
       limit = SEARCH_CONSTANTS.DEFAULT_LIMIT,
       project,
-      orderBy = 'date_desc'
+      orderBy = 'relevance'
     } = options;
 
     if (!query) {
@@ -107,25 +107,20 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
     let sessions: SessionSummarySearchResult[] = [];
     let prompts: UserPromptSearchResult[] = [];
 
-    // Chroma already ranks by vector similarity; 'relevance' has no SQL
-    // equivalent, so drop it before hydrating rows from SessionStore.
-    const sqlOrderBy: 'date_desc' | 'date_asc' | undefined =
-      options.orderBy === 'relevance' ? undefined : options.orderBy;
-
     if (categorized.obsIds.length > 0) {
-      const obsOptions = { type: options.obsType, concepts: options.concepts, files: options.files, orderBy: sqlOrderBy, limit: options.limit, project: options.project };
+      const obsOptions = { type: options.obsType, concepts: options.concepts, files: options.files, orderBy: options.orderBy, limit: options.limit, project: options.project };
       observations = this.sessionStore.getObservationsByIds(categorized.obsIds, obsOptions);
     }
 
     if (categorized.sessionIds.length > 0) {
       sessions = this.sessionStore.getSessionSummariesByIds(categorized.sessionIds, {
-        orderBy: sqlOrderBy, limit: options.limit, project: options.project
+        orderBy: options.orderBy, limit: options.limit, project: options.project
       });
     }
 
     if (categorized.promptIds.length > 0) {
       prompts = this.sessionStore.getUserPromptsByIds(categorized.promptIds, {
-        orderBy: sqlOrderBy, limit: options.limit, project: options.project
+        orderBy: options.orderBy, limit: options.limit, project: options.project
       });
     }
 
