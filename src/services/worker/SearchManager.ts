@@ -108,7 +108,10 @@ export class SearchManager {
       });
 
       if (recentIds.length > 0) {
-        return this.sessionStore.getObservationsByIds(recentIds, { orderBy: 'date_desc', limit: 1, project });
+        // Anchor selection is a semantic-search operation (top Chroma match), not a
+        // chronological listing -- preserve Chroma's relevance ranking so the anchor
+        // is the best match, not merely the most recent match.
+        return this.sessionStore.getObservationsByIds(recentIds, { orderBy: 'relevance', limit: 1, project });
       }
     }
     return [];
@@ -287,16 +290,19 @@ export class SearchManager {
             }
           }
 
-          // Step 4: Hydrate from SQLite with additional filters
+          // Step 4: Hydrate from SQLite with additional filters.
+          // A semantic query drove this Chroma lookup, so default to preserving
+          // Chroma's relevance ranking; an explicit caller-supplied orderBy
+          // (e.g. "date_desc" for a chronological view of matches) still wins.
           if (obsIds.length > 0) {
-            const obsOptions = { ...options, type: obs_type, concepts, files };
+            const obsOptions = { ...options, type: obs_type, concepts, files, orderBy: options.orderBy || 'relevance' };
             observations = this.sessionStore.getObservationsByIds(obsIds, obsOptions);
           }
           if (sessionIds.length > 0) {
-            sessions = this.sessionStore.getSessionSummariesByIds(sessionIds, { orderBy: 'date_desc', limit: options.limit, project: options.project });
+            sessions = this.sessionStore.getSessionSummariesByIds(sessionIds, { orderBy: options.orderBy || 'relevance', limit: options.limit, project: options.project });
           }
           if (promptIds.length > 0) {
-            prompts = this.sessionStore.getUserPromptsByIds(promptIds, { orderBy: 'date_desc', limit: options.limit, project: options.project });
+            prompts = this.sessionStore.getUserPromptsByIds(promptIds, { orderBy: options.orderBy || 'relevance', limit: options.limit, project: options.project });
           }
         } else {
           logger.debug('SEARCH', 'ChromaDB found no matches (final result, no FTS5 fallback)', {});
@@ -1011,10 +1017,11 @@ export class SearchManager {
 
           logger.debug('SEARCH', 'Results within 90-day window', { count: recentIds.length });
 
-          // Step 3: Hydrate from SQLite in temporal order
+          // Step 3: Hydrate from SQLite, preserving Chroma relevance ranking by
+          // default (this is a semantic query); an explicit caller orderBy wins.
           if (recentIds.length > 0) {
             const limit = options.limit || 20;
-            results = this.sessionStore.getObservationsByIds(recentIds, { orderBy: 'date_desc', limit, project: options.project });
+            results = this.sessionStore.getObservationsByIds(recentIds, { orderBy: options.orderBy || 'relevance', limit, project: options.project });
             logger.debug('SEARCH', 'Hydrated observations from SQLite', { count: results.length });
           }
         }
@@ -1097,10 +1104,11 @@ export class SearchManager {
 
           logger.debug('SEARCH', 'Results within 90-day window', { count: recentIds.length });
 
-          // Step 3: Hydrate from SQLite in temporal order
+          // Step 3: Hydrate from SQLite, preserving Chroma relevance ranking by
+          // default (this is a semantic query); an explicit caller orderBy wins.
           if (recentIds.length > 0) {
             const limit = options.limit || 20;
-            results = this.sessionStore.getSessionSummariesByIds(recentIds, { orderBy: 'date_desc', limit, project: options.project });
+            results = this.sessionStore.getSessionSummariesByIds(recentIds, { orderBy: options.orderBy || 'relevance', limit, project: options.project });
             logger.debug('SEARCH', 'Hydrated sessions from SQLite', { count: results.length });
           }
         }
@@ -1183,10 +1191,11 @@ export class SearchManager {
 
           logger.debug('SEARCH', 'Results within 90-day window', { count: recentIds.length });
 
-          // Step 3: Hydrate from SQLite in temporal order
+          // Step 3: Hydrate from SQLite, preserving Chroma relevance ranking by
+          // default (this is a semantic query); an explicit caller orderBy wins.
           if (recentIds.length > 0) {
             const limit = options.limit || 20;
-            results = this.sessionStore.getUserPromptsByIds(recentIds, { orderBy: 'date_desc', limit, project: options.project });
+            results = this.sessionStore.getUserPromptsByIds(recentIds, { orderBy: options.orderBy || 'relevance', limit, project: options.project });
             logger.debug('SEARCH', 'Hydrated user prompts from SQLite', { count: results.length });
           }
         }
@@ -1615,7 +1624,10 @@ export class SearchManager {
           logger.debug('SEARCH', 'Results within 90-day window', { count: recentIds.length });
 
           if (recentIds.length > 0) {
-            results = this.sessionStore.getObservationsByIds(recentIds, { orderBy: 'date_desc', limit: mode === 'auto' ? 1 : limit, project });
+            // Anchor/candidate selection is a semantic-search operation (top Chroma
+            // matches for the query), not a chronological listing -- preserve
+            // Chroma's relevance ranking in both auto and interactive modes.
+            results = this.sessionStore.getObservationsByIds(recentIds, { orderBy: 'relevance', limit: mode === 'auto' ? 1 : limit, project });
             logger.debug('SEARCH', 'Hydrated observations from SQLite', { count: results.length });
           }
         }
