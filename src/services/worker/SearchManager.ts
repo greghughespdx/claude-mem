@@ -776,7 +776,11 @@ export class SearchManager {
           const obsIds = chromaResults.ids;
 
           if (obsIds.length > 0) {
-            results = this.sessionStore.getObservationsByIds(obsIds, { ...filters, type: 'decision' });
+            // Preserve Chroma's relevance ranking through hydration -- passing
+            // a bare `limit` here without `orderBy: 'relevance'` would let
+            // SQLite truncate by created_at_epoch BEFORE the rank-based
+            // sort below ever runs, silently dropping the best matches.
+            results = this.sessionStore.getObservationsByIds(obsIds, { ...filters, type: 'decision', orderBy: filters.orderBy || 'relevance' });
             results.sort((a, b) => obsIds.indexOf(a.id) - obsIds.indexOf(b.id));
           }
         } catch (chromaError) {
@@ -801,7 +805,10 @@ export class SearchManager {
             }
 
             if (rankedIds.length > 0) {
-              results = this.sessionStore.getObservationsByIds(rankedIds, { limit: filters.limit || 20 });
+              // Same truncate-before-rank hazard as above: orderBy: 'relevance'
+              // ensures the limit is applied AFTER hydration preserves the
+              // Chroma-ranked order, not before it via a date-based SQL sort.
+              results = this.sessionStore.getObservationsByIds(rankedIds, { limit: filters.limit || 20, orderBy: filters.orderBy || 'relevance' });
               results.sort((a, b) => rankedIds.indexOf(a.id) - rankedIds.indexOf(b.id));
             }
           } catch (chromaError) {
@@ -871,7 +878,10 @@ export class SearchManager {
           }
 
           if (rankedIds.length > 0) {
-            results = this.sessionStore.getObservationsByIds(rankedIds, { limit: filters.limit || 20 });
+            // orderBy: 'relevance' avoids the truncate-before-rank hazard:
+            // without it, SQLite applies LIMIT after ORDER BY created_at_epoch
+            // DESC, dropping high-relevance matches before this rank sort runs.
+            results = this.sessionStore.getObservationsByIds(rankedIds, { limit: filters.limit || 20, orderBy: filters.orderBy || 'relevance' });
             results.sort((a, b) => rankedIds.indexOf(a.id) - rankedIds.indexOf(b.id));
           }
         } catch (chromaError) {
@@ -946,7 +956,10 @@ export class SearchManager {
         }
 
         if (rankedIds.length > 0) {
-          results = this.sessionStore.getObservationsByIds(rankedIds, { limit: filters.limit || 20 });
+          // orderBy: 'relevance' avoids the truncate-before-rank hazard:
+          // without it, SQLite applies LIMIT after ORDER BY created_at_epoch
+          // DESC, dropping high-relevance matches before this rank sort runs.
+          results = this.sessionStore.getObservationsByIds(rankedIds, { limit: filters.limit || 20, orderBy: filters.orderBy || 'relevance' });
           results.sort((a, b) => rankedIds.indexOf(a.id) - rankedIds.indexOf(b.id));
         }
       }

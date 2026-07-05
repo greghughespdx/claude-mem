@@ -318,3 +318,122 @@ describe('SearchManager - relevance-order hydration (mc-iiz SearchManager port)'
     });
   });
 });
+
+/**
+ * decisions()/changes()/howItWorks() - resort-before-limit truncation
+ *
+ * These three handlers (4 call sites total) rank IDs by Chroma relevance in
+ * JS, then hydrate via sessionStore.getObservationsByIds(rankedIds, { limit })
+ * WITHOUT passing `orderBy: 'relevance'`. getObservationsByIds defaults to
+ * `orderBy: 'date_desc'`, which means the *real* SQLite call applies
+ * `ORDER BY created_at_epoch DESC LIMIT <n>` -- truncating by recency BEFORE
+ * the caller's subsequent `.sort()` by Chroma rank ever runs. A true top
+ * semantic match that happens to be older than `limit` other matches is
+ * dropped before the rank-based sort sees it.
+ *
+ * The fake getObservationsByIds below reproduces that real SQL behavior
+ * (date-desc order + limit when orderBy != 'relevance'; rank-preserving
+ * order + limit applied after sorting when orderBy === 'relevance') so the
+ * truncation bug manifests the same way it does against the real database.
+ */
+describe('decisions()/changes()/howItWorks() - resort-before-limit truncation (mc-iiz follow-on)', () => {
+  const oldEpoch = Date.now() - 1000 * 60 * 60 * 24 * 30; // 30 days ago -- oldest
+  const midEpoch = Date.now() - 1000 * 60 * 60 * 24 * 5;  // 5 days ago
+  const newEpoch = Date.now() - 1000 * 60 * 60 * 24 * 1;  // 1 day ago -- newest
+
+  // Chroma relevance order (best match first) is [1, 2, 3]. Observation 1 is
+  // the single best semantic match but the OLDEST by date; observation 3 is
+  // the weakest semantic match but the NEWEST by date. A date-desc truncation
+  // to limit=2 keeps {3, 2} and drops the true top match (1).
+  const obsTopMatch: ObservationSearchResult = {
+    ...mockObservation, id: 1, title: 'Top Chroma Match', created_at_epoch: oldEpoch
+  };
+  const obsMid: ObservationSearchResult = {
+    ...mockObservation, id: 2, title: 'Mid Relevance Mid Date', created_at_epoch: midEpoch
+  };
+  const obsWeakButNewest: ObservationSearchResult = {
+    ...mockObservation, id: 3, title: 'Weakest Match Newest Date', created_at_epoch: newEpoch
+  };
+
+  const observationsById: Record<number, ObservationSearchResult> = {
+    1: obsTopMatch,
+    2: obsMid,
+    3: obsWeakButNewest
+  };
+  const RANKED_IDS = [1, 2, 3];
+
+  function fakeGetObservationsByIds() {
+    return mock((ids: number[], options: any = {}) => {
+      const rows = ids.map(id => observationsById[id]).filter(Boolean);
+
+      if (options.orderBy === 'relevance') {
+        // Real preserveIdOrder() behavior: sort by caller-provided rank,
+        // THEN apply the limit.
+        const rank = new Map(ids.map((id, i) => [id, i]));
+        const sorted = [...rows].sort((a, b) =>
+          (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER)
+        );
+        return typeof options.limit === 'number' ? sorted.slice(0, options.limit) : sorted;
+      }
+
+      // Real SQL default behavior: ORDER BY created_at_epoch DESC, with the
+      // LIMIT applied in the SQL itself -- i.e. BEFORE any caller-side
+      // relevance re-sort can run.
+      const dateDesc = [...rows].sort((a, b) => b.created_at_epoch - a.created_at_epoch);
+      return typeof options.limit === 'number' ? dateDesc.slice(0, options.limit) : dateDesc;
+    });
+  }
+
+  let manager: SearchManager;
+
+  beforeEach(() => {
+    const mockChromaSync = {
+      queryChroma: mock(() => Promise.resolve({
+        ids: RANKED_IDS,
+        distances: [0.05, 0.2, 0.3],
+        metadatas: RANKED_IDS.map(id => ({
+          sqlite_id: id,
+          doc_type: 'observation',
+          created_at_epoch: observationsById[id].created_at_epoch
+        }))
+      }))
+    };
+
+    const mockSessionStore = {
+      getObservationsByIds: fakeGetObservationsByIds()
+    };
+
+    const mockSessionSearch = {
+      findByType: mock(() => [obsTopMatch, obsMid, obsWeakButNewest]),
+      findByConcept: mock(() => [obsTopMatch, obsMid, obsWeakButNewest])
+    };
+
+    manager = new SearchManager(
+      mockSessionSearch as any,
+      mockSessionStore as any,
+      mockChromaSync as any,
+      new FormattingService(),
+      new TimelineService()
+    );
+  });
+
+  it('decisions() query path preserves the top Chroma match under a limit', async () => {
+    const result = await manager.decisions({ query: 'test query', limit: 2 });
+    expect(result.content[0].text).toContain('Top Chroma Match');
+  });
+
+  it('decisions() no-query metadata+ranking path preserves the top Chroma match under a limit', async () => {
+    const result = await manager.decisions({ limit: 2 });
+    expect(result.content[0].text).toContain('Top Chroma Match');
+  });
+
+  it('changes() preserves the top Chroma match under a limit', async () => {
+    const result = await manager.changes({ limit: 2 });
+    expect(result.content[0].text).toContain('Top Chroma Match');
+  });
+
+  it('howItWorks() preserves the top Chroma match under a limit', async () => {
+    const result = await manager.howItWorks({ limit: 2 });
+    expect(result.content[0].text).toContain('Top Chroma Match');
+  });
+});
