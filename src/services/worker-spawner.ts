@@ -25,8 +25,10 @@ import { SettingsDefaultsManager } from '../shared/SettingsDefaultsManager.js';
 import {
   cleanStalePidFile,
   getPlatformTimeout,
+  readPidFile,
   removePidFile,
   spawnDaemon,
+  terminateUnhealthyWorker,
   touchPidFile,
 } from './infrastructure/ProcessManager.js';
 import {
@@ -109,6 +111,20 @@ export async function ensureWorkerStarted(
   port: number,
   workerScriptPath: string
 ): Promise<boolean> {
+  return ensureWorkerStartedWithReclaimBudget(port, workerScriptPath, 1);
+}
+
+/**
+ * Internal implementation with a bounded unhealthy-worker recovery attempt.
+ * A replacement can itself wedge before health succeeds; do not recursively
+ * reclaim forever from one hook invocation. After one attempt, retain the PID
+ * file and let the external guardian handle later retries.
+ */
+async function ensureWorkerStartedWithReclaimBudget(
+  port: number,
+  workerScriptPath: string,
+  reclaimAttemptsRemaining: number
+): Promise<boolean> {
   // Defensive guard: validate the worker script path before any health check
   // or spawn attempt. Without this, an empty string or missing file just
   // surfaces as a low-signal child_process error from spawnDaemon. Callers
@@ -144,6 +160,22 @@ export async function ensureWorkerStarted(
       return true;
     }
     logger.warn('SYSTEM', 'Live PID detected but worker did not become healthy before timeout');
+
+    // A live PID by itself is not proof of a working worker. A process that
+    // has wedged after writing its PID file otherwise makes every launcher
+    // return false forever. Reclaim only a PID file with a verified start
+    // token, then retry the normal cold-start path. Keeping the PID file when
+    // termination cannot be proven prevents a duplicate daemon race.
+    const pidInfo = readPidFile();
+    if (reclaimAttemptsRemaining > 0 && pidInfo && await terminateUnhealthyWorker(pidInfo)) {
+      removePidFile();
+      logger.warn('SYSTEM', 'Reclaimed unhealthy worker PID; retrying worker startup');
+      return ensureWorkerStartedWithReclaimBudget(port, workerScriptPath, reclaimAttemptsRemaining - 1);
+    }
+    if (reclaimAttemptsRemaining === 0) {
+      logger.warn('SYSTEM', 'Unhealthy replacement worker detected after bounded reclaim; leaving PID for guardian');
+    }
+
     return false;
   }
 
@@ -194,6 +226,13 @@ export async function ensureWorkerStarted(
   // PID file is written by the worker itself after listen() succeeds
   const healthy = await waitForHealth(port, getPlatformTimeout(HOOK_TIMEOUTS.POST_SPAWN_WAIT));
   if (!healthy) {
+    // A just-spawned process can write its PID before wedging. Preserve a live
+    // PID so a later launcher does not race a duplicate daemon and the
+    // external guardian can perform bounded repeated recovery.
+    if (cleanStalePidFile() === 'alive') {
+      logger.error('SYSTEM', 'Worker spawned but remains unhealthy; retaining live PID for guardian');
+      return false;
+    }
     removePidFile();
     logger.error('SYSTEM', 'Worker failed to start (health check timeout)');
     return false;

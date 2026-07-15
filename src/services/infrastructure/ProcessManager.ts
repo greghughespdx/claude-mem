@@ -846,6 +846,88 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
+const UNHEALTHY_WORKER_SIGTERM_WAIT_MS = 2_000;
+const UNHEALTHY_WORKER_SIGKILL_WAIT_MS = 1_000;
+
+/**
+ * Stop a worker whose PID file still identifies its original process but whose
+ * health endpoint has already timed out. This is deliberately narrower than
+ * generic orphan cleanup: it refuses legacy PID files without a start token,
+ * so a reused PID can never be signalled on the basis of liveness alone.
+ *
+ * The caller is responsible for removing the PID file only after this returns
+ * true. That ordering prevents a concurrent launcher from treating a still
+ * live, wedged worker as safely reclaimable.
+ */
+export async function terminateUnhealthyWorker(
+  pidInfo: PidInfo,
+  sigtermWaitMs: number = UNHEALTHY_WORKER_SIGTERM_WAIT_MS,
+  sigkillWaitMs: number = UNHEALTHY_WORKER_SIGKILL_WAIT_MS
+): Promise<boolean> {
+  const workerPid = pidInfo.pid;
+  if (!pidInfo.startToken) {
+    logger.warn('SYSTEM', 'Refusing to terminate unhealthy worker from legacy PID file without start token', {
+      pid: workerPid
+    });
+    return false;
+  }
+
+  if (!verifyPidFileOwnership(pidInfo)) {
+    logger.warn('SYSTEM', 'Refusing to terminate unhealthy worker whose PID identity could not be verified', {
+      pid: workerPid
+    });
+    return false;
+  }
+
+  const waitForExit = async (timeoutMs: number): Promise<boolean> => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (!isProcessAlive(workerPid)) return true;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return !isProcessAlive(workerPid);
+  };
+
+  try {
+    process.kill(workerPid, 'SIGTERM');
+  } catch (error: unknown) {
+    const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
+    if (code !== 'ESRCH') {
+      logger.warn('SYSTEM', 'Failed to SIGTERM unhealthy worker', { pid: workerPid, code });
+      return false;
+    }
+    return true;
+  }
+
+  if (await waitForExit(sigtermWaitMs)) {
+    logger.warn('SYSTEM', 'Terminated unhealthy worker after failed health checks', { pid: workerPid });
+    return true;
+  }
+
+  // The worker is positively identified by its start token and failed the
+  // liveness check that prompted this recovery. Escalate only in that case.
+  try {
+    process.kill(workerPid, 'SIGKILL');
+  } catch (error: unknown) {
+    const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
+    if (code !== 'ESRCH') {
+      logger.warn('SYSTEM', 'Failed to SIGKILL unhealthy worker', { pid: workerPid, code });
+      return false;
+    }
+    return true;
+  }
+
+  const terminated = await waitForExit(sigkillWaitMs);
+  if (terminated) {
+    logger.warn('SYSTEM', 'SIGKILL reclaimed unhealthy worker after failed health checks', { pid: workerPid });
+  } else {
+    logger.error('SYSTEM', 'Unhealthy worker survived SIGKILL; retaining PID file to prevent unsafe respawn', {
+      pid: workerPid
+    });
+  }
+  return terminated;
+}
+
 /**
  * Check if the PID file was written recently (within thresholdMs).
  *
