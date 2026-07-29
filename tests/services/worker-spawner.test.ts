@@ -71,6 +71,17 @@ function resetMocks(): void {
   spawnGate.releaseSpawnLock.mockReset();
 }
 
+function oneShotReclaim(outcome: boolean): () => Promise<boolean> {
+  let available = true;
+  return async () => {
+    if (!available) {
+      throw new Error('reclaim budget exceeded');
+    }
+    available = false;
+    return outcome;
+  };
+}
+
 describe('ensureWorkerStarted startup readiness', () => {
   it('returns ready for a live PID when base would have warmed after the old 3s gate', async () => {
     resetMocks();
@@ -169,6 +180,7 @@ describe('ensureWorkerStarted startup readiness', () => {
   it('returns warming when verified-owner reclaim is refused', async () => {
     resetMocks();
     processManager.cleanStalePidFile.mockReturnValue('alive');
+    processManager.reclaimVerifiedUnhealthyWorker.mockImplementation(oneShotReclaim(false));
 
     const result = await ensureWorkerStarted(39010, import.meta.filename);
 
@@ -179,14 +191,7 @@ describe('ensureWorkerStarted startup readiness', () => {
   it('uses at most one reclaim when the replacement also wedges', async () => {
     resetMocks();
     processManager.cleanStalePidFile.mockReturnValue('alive');
-    let reclaimAvailable = true;
-    processManager.reclaimVerifiedUnhealthyWorker.mockImplementation(async () => {
-      if (!reclaimAvailable) {
-        throw new Error('reclaim budget exceeded');
-      }
-      reclaimAvailable = false;
-      return true;
-    });
+    processManager.reclaimVerifiedUnhealthyWorker.mockImplementation(oneShotReclaim(true));
 
     const result = await ensureWorkerStarted(39011, import.meta.filename);
 

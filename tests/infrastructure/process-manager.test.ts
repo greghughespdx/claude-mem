@@ -44,17 +44,18 @@ const DATA_DIR = paths.dataDir();
 const PID_FILE = paths.workerPid();
 
 async function spawnReclaimProbe(
-  replacementRecordPath?: string
+  replacement?: { path: string; afterWrite: 'stay-alive' | 'exit' }
 ): Promise<{ child: ChildProcess; output: () => string }> {
   let stdout = '';
-  const termHandler = replacementRecordPath === undefined
+  const termHandler = replacement === undefined
     ? "process.on('SIGTERM', () => process.stdout.write('term-received\\n'));"
     : [
         "process.on('SIGTERM', () => {",
-        `require('fs').writeFileSync(${JSON.stringify(replacementRecordPath)},`,
+        `require('fs').writeFileSync(${JSON.stringify(replacement.path)},`,
         "JSON.stringify({ pid: process.pid, port: 37777, startedAt: new Date().toISOString(),",
         "startToken: 'replacement-owner-token' }));",
         "process.stdout.write('term-received\\n');",
+        replacement.afterWrite === 'exit' ? 'process.exit(0);' : '',
         '});'
       ].join('');
   const child = spawn(
@@ -688,7 +689,10 @@ describe('ProcessManager', () => {
     });
 
     it.if(supported)('stops escalation when the PID record changes after SIGTERM', async () => {
-      const { child, output } = await spawnReclaimProbe(PID_FILE);
+      const { child, output } = await spawnReclaimProbe({
+        path: PID_FILE,
+        afterWrite: 'stay-alive'
+      });
       try {
         const token = captureProcessStartToken(child.pid!);
         expect(token).not.toBeNull();
@@ -702,6 +706,28 @@ describe('ProcessManager', () => {
         expect(await reclaimVerifiedUnhealthyWorker(37777)).toBe(false);
         expect(output()).toContain('term-received');
         expect(child.exitCode).toBeNull();
+        expect(readPidFile()!.startToken).toBe('replacement-owner-token');
+      } finally {
+        await stopReclaimProbe(child);
+      }
+    });
+
+    it.if(supported)('preserves a replacement PID record after the original owner exits', async () => {
+      const { child } = await spawnReclaimProbe({
+        path: PID_FILE,
+        afterWrite: 'exit'
+      });
+      try {
+        const token = captureProcessStartToken(child.pid!);
+        expect(token).not.toBeNull();
+        writeFileSync(PID_FILE, JSON.stringify({
+          pid: child.pid,
+          port: 37777,
+          startedAt: new Date().toISOString(),
+          startToken: token
+        }));
+
+        expect(await reclaimVerifiedUnhealthyWorker(37777)).toBe(false);
         expect(readPidFile()!.startToken).toBe('replacement-owner-token');
       } finally {
         await stopReclaimProbe(child);
