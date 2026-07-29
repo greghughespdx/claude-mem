@@ -5,6 +5,7 @@ import { HOOK_TIMEOUTS } from '../../src/shared/hook-constants.js';
 const processManager = {
   cleanStalePidFile: mock(() => 'dead' as 'alive' | 'dead'),
   getPlatformTimeout: mock((timeout: number) => timeout),
+  reclaimVerifiedUnhealthyWorker: mock(async () => false),
   spawnDaemon: mock(() => 2147483647),
   touchPidFile: mock(() => {}),
 };
@@ -54,6 +55,8 @@ function resetMocks(): void {
   processManager.cleanStalePidFile.mockReset();
   processManager.cleanStalePidFile.mockReturnValue('dead');
   processManager.getPlatformTimeout.mockClear();
+  processManager.reclaimVerifiedUnhealthyWorker.mockReset();
+  processManager.reclaimVerifiedUnhealthyWorker.mockResolvedValue(false);
   processManager.spawnDaemon.mockReset();
   processManager.spawnDaemon.mockReturnValue(2147483647);
   processManager.touchPidFile.mockClear();
@@ -133,6 +136,62 @@ describe('ensureWorkerStarted startup readiness', () => {
     expect(healthMonitor.waitForReadiness).toHaveBeenCalledWith(39003, HOOK_TIMEOUTS.READINESS_WAIT);
     expect(processManager.spawnDaemon).not.toHaveBeenCalled();
     expect(processManager.touchPidFile).not.toHaveBeenCalled();
+  });
+
+  it('keeps a healthy but not-ready owner warming without reclaiming it', async () => {
+    resetMocks();
+    processManager.cleanStalePidFile.mockReturnValue('alive');
+    processManager.reclaimVerifiedUnhealthyWorker.mockImplementation(async () => {
+      throw new Error('healthy owner must not be reclaimed');
+    });
+    healthMonitor.waitForHealth.mockResolvedValue(true);
+
+    const result = await ensureWorkerStarted(39008, import.meta.filename);
+
+    expect(result).toBe('warming');
+    expect(processManager.spawnDaemon).not.toHaveBeenCalled();
+  });
+
+  it('reclaims a verified owner with no health response and spawns once', async () => {
+    resetMocks();
+    processManager.cleanStalePidFile.mockReturnValue('alive');
+    processManager.reclaimVerifiedUnhealthyWorker.mockResolvedValue(true);
+    healthMonitor.waitForReadiness
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    const result = await ensureWorkerStarted(39009, import.meta.filename);
+
+    expect(result).toBe('ready');
+    expect(processManager.spawnDaemon).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns warming when verified-owner reclaim is refused', async () => {
+    resetMocks();
+    processManager.cleanStalePidFile.mockReturnValue('alive');
+
+    const result = await ensureWorkerStarted(39010, import.meta.filename);
+
+    expect(result).toBe('warming');
+    expect(processManager.spawnDaemon).not.toHaveBeenCalled();
+  });
+
+  it('uses at most one reclaim when the replacement also wedges', async () => {
+    resetMocks();
+    processManager.cleanStalePidFile.mockReturnValue('alive');
+    let reclaimAvailable = true;
+    processManager.reclaimVerifiedUnhealthyWorker.mockImplementation(async () => {
+      if (!reclaimAvailable) {
+        throw new Error('reclaim budget exceeded');
+      }
+      reclaimAvailable = false;
+      return true;
+    });
+
+    const result = await ensureWorkerStarted(39011, import.meta.filename);
+
+    expect(result).toBe('warming');
+    expect(processManager.spawnDaemon).toHaveBeenCalledTimes(1);
   });
 
   it('returns dead when the spawned worker never becomes ready and no live worker remains', async () => {

@@ -13,6 +13,9 @@ import { paths } from '../../shared/paths.js';
 
 const DATA_DIR = paths.dataDir();
 const PID_FILE = paths.workerPid();
+const VERIFIED_OWNER_TERM_GRACE_MS = 1_000;
+const VERIFIED_OWNER_KILL_GRACE_MS = 1_000;
+const VERIFIED_OWNER_POLL_MS = 50;
 
 interface RuntimeResolverOptions {
   platform?: NodeJS.Platform;
@@ -124,6 +127,7 @@ function resolveWorkerRuntimePathUncached(options: RuntimeResolverOptions): stri
 
 import {
   captureProcessStartToken,
+  isPidAlive,
   verifyPidFileOwnership,
   type PidInfo
 } from '../../supervisor/process-registry.js';
@@ -176,6 +180,181 @@ export function removePidFile(): void {
  */
 export function removePidFileIfOwner(expectedOwnerPid: number | null): void {
   removeOwnedPidFile(PID_FILE, expectedOwnerPid, true);
+}
+
+type VerifiedOwnerState = 'same-owner' | 'owner-gone' | 'unverifiable';
+
+function verifiedOwnerState(ownerRecord: PidInfo): VerifiedOwnerState {
+  if (!Number.isInteger(ownerRecord.pid) || ownerRecord.pid <= 0 || !isPidAlive(ownerRecord.pid)) {
+    return 'owner-gone';
+  }
+
+  if (typeof ownerRecord.startToken !== 'string' || ownerRecord.startToken.length === 0) {
+    return 'unverifiable';
+  }
+
+  const currentToken = captureProcessStartToken(ownerRecord.pid);
+  if (currentToken === null) {
+    return 'unverifiable';
+  }
+
+  return currentToken === ownerRecord.startToken ? 'same-owner' : 'owner-gone';
+}
+
+function readStrictWorkerOwner(port: number): PidInfo | null {
+  const pidRecord = readPidFile();
+  if (
+    pidRecord === null ||
+    !Number.isInteger(pidRecord.pid) ||
+    pidRecord.pid <= 0 ||
+    pidRecord.port !== port ||
+    typeof pidRecord.startToken !== 'string' ||
+    pidRecord.startToken.length === 0
+  ) {
+    return null;
+  }
+
+  return verifiedOwnerState(pidRecord) === 'same-owner' ? pidRecord : null;
+}
+
+function pidRecordMatches(expectedOwner: PidInfo, currentRecord: PidInfo | null): boolean {
+  return (
+    currentRecord !== null &&
+    currentRecord.pid === expectedOwner.pid &&
+    currentRecord.port === expectedOwner.port &&
+    currentRecord.startToken === expectedOwner.startToken
+  );
+}
+
+function pidRecordStillMatches(expectedOwner: PidInfo): boolean {
+  const currentRecord = readPidFile();
+  if (pidRecordMatches(expectedOwner, currentRecord)) {
+    return true;
+  }
+  logger.warn('SYSTEM', 'Worker PID record changed during reclaim; preserving the current record', {
+    expectedPid: expectedOwner.pid,
+    expectedPort: expectedOwner.port,
+    currentPid: currentRecord?.pid,
+    currentPort: currentRecord?.port
+  });
+  return false;
+}
+
+function removeExactPidRecord(expectedOwner: PidInfo): boolean {
+  if (!existsSync(PID_FILE)) return true;
+  if (!pidRecordStillMatches(expectedOwner)) return false;
+  try {
+    unlinkSync(PID_FILE);
+    return true;
+  } catch (error: unknown) {
+    logger.warn(
+      'SYSTEM',
+      'Verified worker exited but its PID record could not be removed',
+      { pid: expectedOwner.pid, port: expectedOwner.port },
+      error instanceof Error ? error : new Error(String(error))
+    );
+    return false;
+  }
+}
+
+async function waitForVerifiedOwnerState(
+  ownerRecord: PidInfo,
+  timeoutMs: number
+): Promise<VerifiedOwnerState> {
+  const deadline = Date.now() + timeoutMs;
+  let state = verifiedOwnerState(ownerRecord);
+
+  while (state === 'same-owner' && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, VERIFIED_OWNER_POLL_MS));
+    state = verifiedOwnerState(ownerRecord);
+  }
+
+  return state;
+}
+
+function ownerRecordStillOwnsProcess(
+  ownerRecord: PidInfo,
+  signal: 'SIGTERM' | 'SIGKILL'
+): boolean {
+  if (pidRecordMatches(ownerRecord, readPidFile()) && verifiedOwnerState(ownerRecord) === 'same-owner') {
+    return true;
+  }
+  logger.warn('SYSTEM', `Worker ownership changed before ${signal}; refusing signal`, {
+    port: ownerRecord.port,
+    pid: ownerRecord.pid
+  });
+  return false;
+}
+
+function sendWorkerSignal(ownerRecord: PidInfo, signal: 'SIGTERM' | 'SIGKILL'): boolean {
+  try {
+    process.kill(ownerRecord.pid, signal);
+    return true;
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
+      return true;
+    }
+    logger.warn(
+      'SYSTEM',
+      'Failed to signal verified unresponsive worker',
+      { port: ownerRecord.port, pid: ownerRecord.pid, signal },
+      error instanceof Error ? error : new Error(String(error))
+    );
+    return false;
+  }
+}
+
+function finishVerifiedReclaim(
+  ownerRecord: PidInfo,
+  ownerState: VerifiedOwnerState
+): boolean {
+  if (ownerState === 'unverifiable') {
+    logger.warn('SYSTEM', 'Worker state became unverifiable during reclaim; preserving its PID record', {
+      port: ownerRecord.port,
+      pid: ownerRecord.pid
+    });
+    return false;
+  }
+  if (ownerState === 'same-owner') {
+    logger.error('SYSTEM', 'Verified unresponsive worker survived the bounded reclaim attempt', {
+      port: ownerRecord.port,
+      pid: ownerRecord.pid
+    });
+    return false;
+  }
+  return removeExactPidRecord(ownerRecord);
+}
+
+/**
+ * Reclaim a live but unresponsive worker only when the PID file proves the
+ * exact process incarnation for the requested port.
+ *
+ * Any missing or unreadable ownership evidence fails closed. The start token
+ * is checked immediately before each signal so PID reuse cannot turn a worker
+ * recovery into a signal against an unrelated process. This is the strict
+ * ownership boundary required by the lifecycle plan in #3138.
+ */
+export async function reclaimVerifiedUnhealthyWorker(port: number): Promise<boolean> {
+  const ownerRecord = readStrictWorkerOwner(port);
+  if (ownerRecord === null) {
+    logger.warn('SYSTEM', 'Unhealthy worker ownership could not be verified; refusing reclaim', { port });
+    return false;
+  }
+
+  logger.warn('SYSTEM', 'Reclaiming verified unresponsive worker', { port, pid: ownerRecord.pid });
+  if (!ownerRecordStillOwnsProcess(ownerRecord, 'SIGTERM') || !sendWorkerSignal(ownerRecord, 'SIGTERM')) {
+    return false;
+  }
+
+  let ownerState = await waitForVerifiedOwnerState(ownerRecord, VERIFIED_OWNER_TERM_GRACE_MS);
+  if (ownerState === 'same-owner') {
+    if (!ownerRecordStillOwnsProcess(ownerRecord, 'SIGKILL') || !sendWorkerSignal(ownerRecord, 'SIGKILL')) {
+      return false;
+    }
+    ownerState = await waitForVerifiedOwnerState(ownerRecord, VERIFIED_OWNER_KILL_GRACE_MS);
+  }
+
+  return finishVerifiedReclaim(ownerRecord, ownerState);
 }
 
 export function getPlatformTimeout(baseMs: number): number {

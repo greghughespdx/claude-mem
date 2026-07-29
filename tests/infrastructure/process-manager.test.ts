@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, afterAll } from 'bun:test';
+import { spawn, type ChildProcess } from 'child_process';
 import { existsSync, readFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import path from 'path';
@@ -29,6 +30,7 @@ const {
   buildWindowsDaemonStartCommand,
   resolveWorkerRuntimePath,
   captureProcessStartToken,
+  reclaimVerifiedUnhealthyWorker,
   verifyPidFileOwnership,
 } = await import('../../src/services/infrastructure/index.js');
 const { paths } = await import('../../src/shared/paths.js');
@@ -40,6 +42,65 @@ const { paths } = await import('../../src/shared/paths.js');
 // module the code under test uses, so test and code can never diverge.
 const DATA_DIR = paths.dataDir();
 const PID_FILE = paths.workerPid();
+
+async function spawnReclaimProbe(
+  replacementRecordPath?: string
+): Promise<{ child: ChildProcess; output: () => string }> {
+  let stdout = '';
+  const termHandler = replacementRecordPath === undefined
+    ? "process.on('SIGTERM', () => process.stdout.write('term-received\\n'));"
+    : [
+        "process.on('SIGTERM', () => {",
+        `require('fs').writeFileSync(${JSON.stringify(replacementRecordPath)},`,
+        "JSON.stringify({ pid: process.pid, port: 37777, startedAt: new Date().toISOString(),",
+        "startToken: 'replacement-owner-token' }));",
+        "process.stdout.write('term-received\\n');",
+        '});'
+      ].join('');
+  const child = spawn(
+    process.execPath,
+    [
+      '-e',
+      [
+        termHandler,
+        "process.stdout.write('ready\\n');",
+        'setInterval(() => {}, 1000);'
+      ].join('')
+    ],
+    { stdio: ['ignore', 'pipe', 'ignore'] }
+  );
+  child.stdout?.on('data', chunk => {
+    stdout += String(chunk);
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const deadline = setTimeout(() => reject(new Error('reclaim probe did not start')), 5_000);
+    const onExit = (code: number | null): void => {
+      clearTimeout(deadline);
+      reject(new Error(`reclaim probe exited before ready (${code ?? 'signal'})`));
+    };
+    const onData = (): void => {
+      if (!stdout.includes('ready')) return;
+      clearTimeout(deadline);
+      child.stdout?.off('data', onData);
+      child.off('exit', onExit);
+      resolve();
+    };
+    child.stdout?.on('data', onData);
+    child.once('exit', onExit);
+  });
+
+  return { child, output: () => stdout };
+}
+
+async function stopReclaimProbe(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill('SIGKILL');
+  await Promise.race([
+    new Promise<void>(resolve => child.once('exit', () => resolve())),
+    new Promise<void>(resolve => setTimeout(resolve, 2_000))
+  ]);
+}
 
 describe('ProcessManager', () => {
   const REAL_DATA_DIR = path.join(homedir(), '.claude-mem');
@@ -545,6 +606,106 @@ describe('ProcessManager', () => {
         startedAt: new Date().toISOString(),
         startToken: 'token-from-a-different-incarnation'
       })).toBe(false);
+    });
+  });
+
+  describe('reclaimVerifiedUnhealthyWorker', () => {
+    const supported = process.platform === 'linux' || process.platform === 'darwin';
+
+    it.if(supported)('refuses a tokenless live PID record without signaling', async () => {
+      const { child } = await spawnReclaimProbe();
+      try {
+        writeFileSync(PID_FILE, JSON.stringify({
+          pid: child.pid,
+          port: 37777,
+          startedAt: new Date().toISOString()
+        }));
+
+        expect(await reclaimVerifiedUnhealthyWorker(37777)).toBe(false);
+        expect(child.exitCode).toBeNull();
+        expect(existsSync(PID_FILE)).toBe(true);
+      } finally {
+        await stopReclaimProbe(child);
+      }
+    });
+
+    it.if(supported)('refuses a mismatched start token without signaling', async () => {
+      const { child } = await spawnReclaimProbe();
+      try {
+        writeFileSync(PID_FILE, JSON.stringify({
+          pid: child.pid,
+          port: 37777,
+          startedAt: new Date().toISOString(),
+          startToken: 'not-this-process-incarnation'
+        }));
+
+        expect(await reclaimVerifiedUnhealthyWorker(37777)).toBe(false);
+        expect(child.exitCode).toBeNull();
+        expect(existsSync(PID_FILE)).toBe(true);
+      } finally {
+        await stopReclaimProbe(child);
+      }
+    });
+
+    it.if(supported)('refuses a verified owner recorded for another port', async () => {
+      const { child } = await spawnReclaimProbe();
+      try {
+        const token = captureProcessStartToken(child.pid!);
+        expect(token).not.toBeNull();
+        writeFileSync(PID_FILE, JSON.stringify({
+          pid: child.pid,
+          port: 37777,
+          startedAt: new Date().toISOString(),
+          startToken: token
+        }));
+
+        expect(await reclaimVerifiedUnhealthyWorker(37778)).toBe(false);
+        expect(child.exitCode).toBeNull();
+        expect(existsSync(PID_FILE)).toBe(true);
+      } finally {
+        await stopReclaimProbe(child);
+      }
+    });
+
+    it.if(supported)('terminates only the exact owner and removes its unchanged PID record', async () => {
+      const { child, output } = await spawnReclaimProbe();
+      try {
+        const token = captureProcessStartToken(child.pid!);
+        expect(token).not.toBeNull();
+        writeFileSync(PID_FILE, JSON.stringify({
+          pid: child.pid,
+          port: 37777,
+          startedAt: new Date().toISOString(),
+          startToken: token
+        }));
+
+        expect(await reclaimVerifiedUnhealthyWorker(37777)).toBe(true);
+        expect(output()).toContain('term-received');
+        expect(existsSync(PID_FILE)).toBe(false);
+      } finally {
+        await stopReclaimProbe(child);
+      }
+    });
+
+    it.if(supported)('stops escalation when the PID record changes after SIGTERM', async () => {
+      const { child, output } = await spawnReclaimProbe(PID_FILE);
+      try {
+        const token = captureProcessStartToken(child.pid!);
+        expect(token).not.toBeNull();
+        writeFileSync(PID_FILE, JSON.stringify({
+          pid: child.pid,
+          port: 37777,
+          startedAt: new Date().toISOString(),
+          startToken: token
+        }));
+
+        expect(await reclaimVerifiedUnhealthyWorker(37777)).toBe(false);
+        expect(output()).toContain('term-received');
+        expect(child.exitCode).toBeNull();
+        expect(readPidFile()!.startToken).toBe('replacement-owner-token');
+      } finally {
+        await stopReclaimProbe(child);
+      }
     });
   });
 

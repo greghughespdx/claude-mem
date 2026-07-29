@@ -7,6 +7,7 @@ import { SettingsDefaultsManager } from '../shared/SettingsDefaultsManager.js';
 import {
   cleanStalePidFile,
   getPlatformTimeout,
+  reclaimVerifiedUnhealthyWorker,
   spawnDaemon,
   touchPidFile,
 } from './infrastructure/ProcessManager.js';
@@ -101,8 +102,22 @@ export async function ensureWorkerStarted(
       logger.error('SYSTEM', 'Live PID disappeared before readiness endpoint became available');
       return 'dead';
     }
-    logger.warn('SYSTEM', 'Live PID detected but worker did not become ready before timeout');
-    return 'warming';
+    if (!workerStillHealthy) {
+      const reclaimed = await reclaimVerifiedUnhealthyWorker(port);
+      if (!reclaimed) {
+        logger.warn('SYSTEM', 'Live worker remains unresponsive; leaving it for a later bounded attempt');
+        return 'warming';
+      }
+      logger.info('SYSTEM', 'Verified unresponsive worker reclaimed; continuing through normal spawn gate');
+      // One reclaim is the full budget for this invocation. The replacement
+      // path below may return warming, but it never loops back to reclaim.
+    } else {
+      // #3231 made warming a valid startup result. A health response proves
+      // the process is serving its lifecycle API, so slow readiness is not a
+      // reclaim condition.
+      logger.warn('SYSTEM', 'Live worker is healthy but still initializing');
+      return 'warming';
+    }
   }
 
   if (await waitForHealth(port, 1000)) {
