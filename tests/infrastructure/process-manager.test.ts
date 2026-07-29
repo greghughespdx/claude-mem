@@ -103,6 +103,16 @@ async function stopReclaimProbe(child: ChildProcess): Promise<void> {
   ]);
 }
 
+function isReclaimProbeAlive(child: ChildProcess): boolean {
+  if (child.pid === undefined) return false;
+  try {
+    process.kill(child.pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 describe('ProcessManager', () => {
   const REAL_DATA_DIR = path.join(homedir(), '.claude-mem');
 
@@ -623,7 +633,7 @@ describe('ProcessManager', () => {
         }));
 
         expect(await reclaimVerifiedUnhealthyWorker(37777)).toBe(false);
-        expect(child.exitCode).toBeNull();
+        expect(isReclaimProbeAlive(child)).toBe(true);
         expect(existsSync(PID_FILE)).toBe(true);
       } finally {
         await stopReclaimProbe(child);
@@ -641,7 +651,7 @@ describe('ProcessManager', () => {
         }));
 
         expect(await reclaimVerifiedUnhealthyWorker(37777)).toBe(false);
-        expect(child.exitCode).toBeNull();
+        expect(isReclaimProbeAlive(child)).toBe(true);
         expect(existsSync(PID_FILE)).toBe(true);
       } finally {
         await stopReclaimProbe(child);
@@ -661,7 +671,7 @@ describe('ProcessManager', () => {
         }));
 
         expect(await reclaimVerifiedUnhealthyWorker(37778)).toBe(false);
-        expect(child.exitCode).toBeNull();
+        expect(isReclaimProbeAlive(child)).toBe(true);
         expect(existsSync(PID_FILE)).toBe(true);
       } finally {
         await stopReclaimProbe(child);
@@ -705,7 +715,7 @@ describe('ProcessManager', () => {
 
         expect(await reclaimVerifiedUnhealthyWorker(37777)).toBe(false);
         expect(output()).toContain('term-received');
-        expect(child.exitCode).toBeNull();
+        expect(isReclaimProbeAlive(child)).toBe(true);
         expect(readPidFile()!.startToken).toBe('replacement-owner-token');
       } finally {
         await stopReclaimProbe(child);
