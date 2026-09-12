@@ -204,6 +204,29 @@ export function resolveProviderTimeoutMs(settingsPath: string = USER_SETTINGS_PA
   return Math.floor(parsed);
 }
 
+/**
+ * mc-6n5gy: reasoning-effort override for the provider request body.
+ *
+ * gpt-oss on the local Ollama gateway (CLAUDE_MEM_OPENROUTER_BASE_URL =
+ * http://192.168.15.6:30068/v1) bills its Harmony reasoning trace and the
+ * final answer against the SAME max_tokens budget (see max_tokens above).
+ * With no reasoning-effort hint the model was measured spending most or all
+ * of a 4,096-token budget on reasoning and returning finishReason=length with
+ * empty content (mc-6n5gy). A direct curl comparison against this gateway,
+ * same prompt, temperature 0.3, three payloads: no hint (reasoning 300 to 437
+ * chars, completion_tokens 468 to 481), think: "low" (reasoning 484 to 1055
+ * chars, same or worse, not a real effect), reasoning_effort: "low"
+ * (reasoning 138 to 151 chars, completion_tokens 356 to 370). Only the
+ * OpenAI-style reasoning_effort field measurably shrinks the reasoning trace
+ * on this gateway, so that is the field sent. CLAUDE_MEM_PROVIDER_REASONING_EFFORT
+ * overrides the value; an empty string omits the field entirely (falls back
+ * to the endpoint's own default behaviour).
+ */
+export function resolveReasoningEffort(settingsPath: string = USER_SETTINGS_PATH): string {
+  const raw = SettingsDefaultsManager.loadFromFile(settingsPath).CLAUDE_MEM_PROVIDER_REASONING_EFFORT;
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
 interface OpenAIMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -330,6 +353,12 @@ export function buildOpenRouterRequestBody(input: {
   fallbackModels: string[];
   messages: OpenAIMessage[];
   apiUrl: string;
+  /**
+   * mc-6n5gy. OpenAI-style reasoning-effort hint, verified live against the
+   * local gpt-oss gateway to actually shrink the reasoning trace (see
+   * resolveReasoningEffort). Falsy (including empty string) omits the field.
+   */
+  reasoningEffort?: string;
 }): Record<string, unknown> {
   const isOpenRouter = isOpenRouterApiUrl(input.apiUrl);
   const useFallbacks = isOpenRouter && input.fallbackModels.length > 0;
@@ -340,8 +369,9 @@ export function buildOpenRouterRequestBody(input: {
     messages: input.messages,
     temperature: 0.3,  // Lower temperature for structured extraction
     max_tokens: 4096,
+    ...(input.reasoningEffort ? { reasoning_effort: input.reasoningEffort } : {}),
     // Ask openrouter.ai for usage accounting (token counts + cost).
-    // Only sent to openrouter.ai — strict custom gateways may reject
+    // Only sent to openrouter.ai - strict custom gateways may reject
     // unknown body fields.
     ...(isOpenRouter ? { usage: { include: true } } : {}),
   };
@@ -491,7 +521,7 @@ export class OpenRouterProvider extends OpenAICompatibleProvider<OpenRouterConfi
         'Content-Type': 'application/json',
         ...(priorRequestId ? { 'x-claude-mem-prior-request-id': priorRequestId } : {}),
       },
-      body: JSON.stringify(buildOpenRouterRequestBody({ model, fallbackModels, messages, apiUrl })),
+      body: JSON.stringify(buildOpenRouterRequestBody({ model, fallbackModels, messages, apiUrl, reasoningEffort: resolveReasoningEffort() })),
       signal: attemptSignal,
     });
   }

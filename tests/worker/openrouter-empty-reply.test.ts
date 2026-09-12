@@ -11,6 +11,7 @@ import { join } from 'path';
 import {
   looksLikeObserverXml,
   resolveProviderTimeoutMs,
+  resolveReasoningEffort,
 } from '../../src/services/worker/OpenRouterProvider.js';
 import { DEFAULT_PROVIDER_TIMEOUT_MS } from '../../src/services/worker/retry.js';
 
@@ -65,5 +66,45 @@ describe('resolveProviderTimeoutMs (mc-u2vo2 fix 3)', () => {
       writeFileSync(settingsPath, JSON.stringify({ CLAUDE_MEM_PROVIDER_TIMEOUT_MS: bad }));
       expect(resolveProviderTimeoutMs(settingsPath)).toBe(DEFAULT_PROVIDER_TIMEOUT_MS);
     }
+  });
+});
+
+describe('resolveReasoningEffort (mc-6n5gy)', () => {
+  let tempDir: string;
+  let settingsPath: string;
+  let saved: string | undefined;
+
+  beforeEach(() => {
+    tempDir = join(tmpdir(), `openrouter-reasoning-effort-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(tempDir, { recursive: true });
+    settingsPath = join(tempDir, 'settings.json');
+    saved = process.env.CLAUDE_MEM_PROVIDER_REASONING_EFFORT;
+    delete process.env.CLAUDE_MEM_PROVIDER_REASONING_EFFORT;
+  });
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env.CLAUDE_MEM_PROVIDER_REASONING_EFFORT;
+    else process.env.CLAUDE_MEM_PROVIDER_REASONING_EFFORT = saved;
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('defaults to low when the setting is absent', () => {
+    writeFileSync(settingsPath, JSON.stringify({}));
+    expect(resolveReasoningEffort(settingsPath)).toBe('low');
+  });
+
+  it('honors an explicit setting', () => {
+    writeFileSync(settingsPath, JSON.stringify({ CLAUDE_MEM_PROVIDER_REASONING_EFFORT: 'high' }));
+    expect(resolveReasoningEffort(settingsPath)).toBe('high');
+  });
+
+  it('an explicit empty string opts out of the field entirely', () => {
+    writeFileSync(settingsPath, JSON.stringify({ CLAUDE_MEM_PROVIDER_REASONING_EFFORT: '' }));
+    expect(resolveReasoningEffort(settingsPath)).toBe('');
+  });
+
+  it('trims surrounding whitespace', () => {
+    writeFileSync(settingsPath, JSON.stringify({ CLAUDE_MEM_PROVIDER_REASONING_EFFORT: '  medium  ' }));
+    expect(resolveReasoningEffort(settingsPath)).toBe('medium');
   });
 });

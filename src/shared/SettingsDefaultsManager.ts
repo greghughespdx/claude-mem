@@ -62,6 +62,7 @@ export interface SettingsDefaults {
   CLAUDE_MEM_MAX_CONCURRENT_AGENTS: string;  
   CLAUDE_MEM_OBSERVER_MAX_CONVERSATION_CHARS: string;
   CLAUDE_MEM_PROVIDER_TIMEOUT_MS: string;
+  CLAUDE_MEM_PROVIDER_REASONING_EFFORT: string;
   CLAUDE_MEM_HOOK_FAIL_LOUD_THRESHOLD: string;  
   CLAUDE_MEM_EXCLUDED_PROJECTS: string;  
   CLAUDE_MEM_FOLDER_MD_EXCLUDE: string;
@@ -197,6 +198,7 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_MAX_CONCURRENT_AGENTS: '2',  // Max concurrent Claude SDK agent subprocesses
     CLAUDE_MEM_OBSERVER_MAX_CONVERSATION_CHARS: '400000',  // Retire an observer conversation past this size and start a fresh generation (#3800)
     CLAUDE_MEM_PROVIDER_TIMEOUT_MS: '180000',  // mc-u2vo2 fix 3 - per-attempt provider request timeout in ms (was a hard-coded 30000)
+    CLAUDE_MEM_PROVIDER_REASONING_EFFORT: 'low',  // mc-6n5gy - reasoning_effort sent on every provider request so a reasoning model's Harmony trace does not eat the shared completion-token budget before the answer starts. Empty string omits the field.
     CLAUDE_MEM_HOOK_FAIL_LOUD_THRESHOLD: '3',  // Plan 05 Phase 8 — escalate to exit code 2 after N consecutive worker-unreachable hook invocations
     CLAUDE_MEM_EXCLUDED_PROJECTS: '',  // Comma-separated glob patterns for excluded project paths
     CLAUDE_MEM_FOLDER_MD_EXCLUDE: '[]',  // JSON array of folder paths to exclude from CLAUDE.md generation

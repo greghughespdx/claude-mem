@@ -202,6 +202,31 @@ describe('buildOpenRouterRequestBody', () => {
     expect(body.max_tokens).toBe(4096);
     expect(body.messages).toEqual(MESSAGES);
   });
+
+  // mc-6n5gy: reasoning_effort applies on every gateway, openrouter.ai and
+  // custom alike, since the local gpt-oss gateway that needs it is a custom
+  // (non-openrouter.ai) endpoint.
+  it('sends reasoning_effort when supplied, on any gateway', () => {
+    const onOpenRouter = buildOpenRouterRequestBody({
+      model: 'vendor/model-a', fallbackModels: [], messages: MESSAGES, apiUrl: DEFAULT_OPENROUTER_API_URL, reasoningEffort: 'low',
+    });
+    const customGateway = buildOpenRouterRequestBody({
+      model: 'vendor/model-a', fallbackModels: [], messages: MESSAGES, apiUrl: 'http://192.168.15.6:30068/v1/chat/completions', reasoningEffort: 'low',
+    });
+    expect(onOpenRouter.reasoning_effort).toBe('low');
+    expect(customGateway.reasoning_effort).toBe('low');
+  });
+
+  it('omits reasoning_effort when not supplied or empty', () => {
+    const noField = buildOpenRouterRequestBody({
+      model: 'vendor/model-a', fallbackModels: [], messages: MESSAGES, apiUrl: DEFAULT_OPENROUTER_API_URL,
+    });
+    const emptyField = buildOpenRouterRequestBody({
+      model: 'vendor/model-a', fallbackModels: [], messages: MESSAGES, apiUrl: DEFAULT_OPENROUTER_API_URL, reasoningEffort: '',
+    });
+    expect(noField).not.toHaveProperty('reasoning_effort');
+    expect(emptyField).not.toHaveProperty('reasoning_effort');
+  });
 });
 
 describe('isOpenRouterApiUrl', () => {
