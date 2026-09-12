@@ -33,7 +33,7 @@ export function parseRetryAfterMs(value: string | null): number | undefined {
 export interface RetryOptions {
   /** Maximum retry attempts (in addition to the initial attempt). Cap=2 by default for non-idempotent POSTs. */
   maxRetries?: number;
-  /** Per-attempt timeout in ms. Default 30s. */
+  /** Per-attempt timeout in ms. Default DEFAULT_PROVIDER_TIMEOUT_MS (180s). */
   perAttemptTimeoutMs?: number;
   /** Base delay used for exponential backoff. Default 100ms. */
   baseDelayMs?: number;
@@ -45,9 +45,21 @@ export interface RetryOptions {
   abortSignal?: AbortSignal;
 }
 
+/**
+ * Per-attempt timeout for provider requests, in ms (mc-u2vo2 fix 3).
+ *
+ * Was 30_000. A local Ollama endpoint routinely needs longer than that: a
+ * capture of real observer traffic on 2026-09-12 measured a median generation
+ * time of 24 s and a maximum of 159 s, and 1,008 of 3,681 gateway requests
+ * (27.4 percent) were killed by the client at the 30 s wall and retried,
+ * piling more work onto the GPU that caused the timeout. The retry count is
+ * unchanged. Override with CLAUDE_MEM_PROVIDER_TIMEOUT_MS.
+ */
+export const DEFAULT_PROVIDER_TIMEOUT_MS = 180_000;
+
 const DEFAULT_OPTIONS: Required<Omit<RetryOptions, 'label' | 'abortSignal'>> = {
   maxRetries: 2,
-  perAttemptTimeoutMs: 30_000,
+  perAttemptTimeoutMs: DEFAULT_PROVIDER_TIMEOUT_MS,
   baseDelayMs: 100,
   maxDelayMs: 30_000,
 };

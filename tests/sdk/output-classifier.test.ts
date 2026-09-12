@@ -186,3 +186,16 @@ describe('previewOutput', () => {
     expect(previewOutput(42)).toContain('non-string');
   });
 });
+
+describe('skip_observation classification (mc-u2vo2 fix 1)', () => {
+  it('classifies <skip_observation/> as xml, not prose', () => {
+    expect(classifyObserverOutput('<skip_observation/>')).toBe('xml');
+  });
+
+  it('does not read a skip token as quota, overflow or auth prose', () => {
+    expect(isQuotaLimitedObserverOutput('<skip_observation/>')).toBe(false);
+    expect(isContextOverflowObserverOutput('<skip_observation/>')).toBe(false);
+    expect(isAuthFailureObserverOutput('<skip_observation/>')).toBe(false);
+  });
+});
+

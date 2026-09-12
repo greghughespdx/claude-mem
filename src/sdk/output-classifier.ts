@@ -32,6 +32,7 @@ export function previewOutput(raw: unknown, maxLength: number = PREVIEW_LENGTH):
  * Classify an observer/summarizer SDK output.
  *
  * - `xml`      — contains a parseable `<observation>`/`<summary>`/`<skip_summary/>`
+ *                /`<skip_observation/>`
  *                root tag. (Whether it ultimately yields rows is parseAgentXml's
  *                job; this is the structural gate.)
  * - `idle`     — empty / whitespace-only. Benign: the SDK had nothing to say.
@@ -42,7 +43,7 @@ export function classifyObserverOutput(raw: unknown): ObserverOutputClass {
     return 'idle';
   }
 
-  if (/<(observation|summary)\b/i.test(raw) || /<skip_summary\b/i.test(raw)) {
+  if (/<(observation|summary)\b/i.test(raw) || /<skip_(summary|observation)\b/i.test(raw)) {
     return 'xml';
   }
 
@@ -59,7 +60,7 @@ export function isQuotaLimitedObserverOutput(raw: unknown): boolean {
     return false;
   }
 
-  if (/<(observation|summary)\b/i.test(raw) || /<skip_summary\b/i.test(raw)) {
+  if (/<(observation|summary)\b/i.test(raw) || /<skip_(summary|observation)\b/i.test(raw)) {
     return false;
   }
 
@@ -105,7 +106,7 @@ export function isContextOverflowObserverOutput(raw: unknown): boolean {
     return false;
   }
 
-  if (/<(observation|summary)\b/i.test(raw) || /<skip_summary\b/i.test(raw)) {
+  if (/<(observation|summary)\b/i.test(raw) || /<skip_(summary|observation)\b/i.test(raw)) {
     return false;
   }
 
@@ -130,7 +131,7 @@ export function isAuthFailureObserverOutput(raw: unknown): boolean {
     return false;
   }
 
-  if (/<(observation|summary)\b/i.test(raw) || /<skip_summary\b/i.test(raw)) {
+  if (/<(observation|summary)\b/i.test(raw) || /<skip_(summary|observation)\b/i.test(raw)) {
     return false;
   }
 

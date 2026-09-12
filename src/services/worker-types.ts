@@ -25,16 +25,24 @@ export interface ActiveSession {
   currentProvider: 'claude' | 'gemini' | 'openrouter' | null;
   consecutiveRestarts: number;
   /**
-   * Legacy invalid-output counter, intentionally always 0: ordinary non-XML
-   * observer output is confirmed as a no-op and resets this so benign skip
-   * acknowledgements never accumulate respawn debt.
+   * Consecutive observer replies that carried text the parser could not read
+   * (conversational prose, or XML opened and never closed).
    *
-   * It is deliberately NOT the breaker for repeated hard rejections — counting
-   * skips and rejections on one counter is what produced the respawn storm this
-   * reset was added to stop. Hard rejections are counted by
-   * `consecutiveContextOverflows` instead.
+   * It was intentionally pinned at 0 and never compared to anything, which is
+   * why 112 discarded batches in one day surfaced nowhere. mc-u2vo2 fix 2
+   * wires it up: it counts only unreadable replies, never benign empty/skip
+   * ones, it resets on any valid parse, and it logs at ERROR once it reaches
+   * INVALID_OUTPUT_ALERT_THRESHOLD. It still does not drive respawn - hard
+   * context rejections are counted by `consecutiveContextOverflows` instead.
    */
   consecutiveInvalidOutputs: number;
+  /**
+   * True while one unreadable observer reply has already been retried and the
+   * retry has not yet been judged (mc-u2vo2 fix 2). It caps the retry at one
+   * attempt per batch: the first unreadable reply resets the batch to pending,
+   * and the second stores a salvaged observation instead of looping.
+   */
+  invalidOutputRetried?: boolean;
   /**
    * Consecutive "prompt too long" rejections on this session's conversation.
    *

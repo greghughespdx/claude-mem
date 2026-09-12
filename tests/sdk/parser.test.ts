@@ -339,3 +339,34 @@ describe('parseAgentXml — concept normalization (#3379)', () => {
     expect(result[0].concepts).toEqual([]);
   });
 });
+
+describe('positive observation skip token (mc-u2vo2 fix 1)', () => {
+  it('parses <skip_observation/> as a valid, deliberate skip', () => {
+    const result = parseAgentXml('<skip_observation/>');
+    expect(result.valid).toBe(true);
+    if (!result.valid) return;
+    expect(result.observerSkip).toBe(true);
+    expect(result.observations).toEqual([]);
+    expect(result.summary).toBeNull();
+  });
+
+  it('accepts the spaced and reasoned forms', () => {
+    for (const raw of ['<skip_observation />', '<skip_observation reason="routine" />']) {
+      const result = parseAgentXml(raw);
+      expect(result.valid).toBe(true);
+      if (!result.valid) return;
+      expect(result.observerSkip).toBe(true);
+    }
+  });
+
+  it('does not mark an ordinary observation as a skip', () => {
+    const result = parseAgentXml(`<observation>
+      <type>discovery</type>
+      <title>Real observation</title>
+    </observation>`);
+    expect(result.valid).toBe(true);
+    if (!result.valid) return;
+    expect(result.observerSkip).toBeUndefined();
+  });
+});
+

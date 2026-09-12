@@ -533,37 +533,152 @@ describe('ResponseProcessor', () => {
     });
   });
 
-  describe('non-XML observer responses', () => {
-    it('warns and clears pending work when the observer returns non-XML prose', async () => {
+  describe('non-XML observer responses (mc-u2vo2 fix 2)', () => {
+    function unreadableSessionManager() {
       const confirmClaimedMessages = mock(() => Promise.resolve(0));
+      const resetProcessingToPending = mock(() => Promise.resolve(1));
       mockSessionManager = {
         getMessageIterator: async function* () { yield* []; },
         getPendingMessageStore: () => ({ confirmProcessed: mock(() => {}) }),
+        getClaimedMessages: () => [],
         confirmClaimedMessages,
+        resetProcessingToPending,
       } as unknown as SessionManager;
+      return { confirmClaimedMessages, resetProcessingToPending };
+    }
 
-      const session = createMockSession();
-      const responseText = 'Skipping — repeated log scan with no new findings.';
+    it('drops an unreadable batch it cannot salvage, at ERROR level, naming the batch', async () => {
+      const { confirmClaimedMessages } = unreadableSessionManager();
+
+      // No claimed messages: there is nothing to reset and nothing to attach a
+      // salvaged observation to, so the only correct outcome is a loud drop.
+      const session = createMockSession({ claimedMessageIds: [] });
 
       await processAgentResponse(
-        responseText,
-        session,
-        mockDbManager,
-        mockSessionManager,
-        mockWorker,
-        100,
-        null,
-        'TestAgent'
+        'Skipping — repeated log scan with no new findings.',
+        session, mockDbManager, mockSessionManager, mockWorker, 100, null, 'TestAgent'
       );
 
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(logger.error).toHaveBeenCalledWith(
         'PARSER',
-        expect.stringMatching(/^TestAgent returned non-XML prose response/),
+        expect.stringMatching(/cannot be salvaged/),
         expect.objectContaining({ sessionId: 1, outputClass: 'prose' })
       );
       expect(confirmClaimedMessages).toHaveBeenCalledWith(1);
       expect(session.earliestPendingTimestamp).toBeNull();
       expect(mockStoreObservations).not.toHaveBeenCalled();
+    });
+
+    it('resets an unreadable batch to pending for exactly one retry', async () => {
+      const { confirmClaimedMessages, resetProcessingToPending } = unreadableSessionManager();
+      const session = createMockSession({ claimedMessageIds: [11, 12, 13] });
+
+      await processAgentResponse(
+        'Skipping — repeated log scan with no new findings.',
+        session, mockDbManager, mockSessionManager, mockWorker, 100, null, 'TestAgent'
+      );
+
+      expect(resetProcessingToPending).toHaveBeenCalledWith(1);
+      expect(confirmClaimedMessages).not.toHaveBeenCalled();
+      expect(mockStoreObservations).not.toHaveBeenCalled();
+      expect(session.invalidOutputRetried).toBe(true);
+      expect(session.consecutiveInvalidOutputs).toBe(1);
+    });
+
+    it('stores a salvaged observation when the retry is unreadable too', async () => {
+      unreadableSessionManager();
+      // invalidOutputRetried true means the one allowed retry already happened.
+      const session = createMockSession({
+        claimedMessageIds: [11, 12, 13],
+        invalidOutputRetried: true,
+        consecutiveInvalidOutputs: 1,
+      });
+
+      await processAgentResponse(
+        '<observation> <type>discovery</type> <title>Cut off mid-tag',
+        session, mockDbManager, mockSessionManager, mockWorker, 100, null, 'TestAgent'
+      );
+
+      expect(mockStoreObservations).toHaveBeenCalled();
+      const [, , observations] = mockStoreObservations.mock.calls[0];
+      expect(observations).toHaveLength(1);
+      expect(observations[0].type).toBe('salvaged_observer_output');
+      expect(observations[0].narrative).toContain('Cut off mid-tag');
+      expect(session.invalidOutputRetried).toBe(false);
+    });
+
+    it('caps the retry at one: a second unreadable reply never resets again', async () => {
+      const { resetProcessingToPending } = unreadableSessionManager();
+      const session = createMockSession({
+        claimedMessageIds: [11],
+        invalidOutputRetried: true,
+        consecutiveInvalidOutputs: 1,
+      });
+
+      await processAgentResponse(
+        'still not xml', session, mockDbManager, mockSessionManager, mockWorker, 100, null, 'TestAgent'
+      );
+
+      expect(resetProcessingToPending).not.toHaveBeenCalled();
+    });
+
+    it('logs at ERROR once consecutive unreadable outputs reach the threshold', async () => {
+      unreadableSessionManager();
+      const session = createMockSession({
+        claimedMessageIds: [11],
+        invalidOutputRetried: true,
+        consecutiveInvalidOutputs: 2,
+      });
+
+      await processAgentResponse(
+        'still not xml', session, mockDbManager, mockSessionManager, mockWorker, 100, null, 'TestAgent'
+      );
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'PARSER',
+        expect.stringMatching(/3 consecutive unreadable outputs/),
+        expect.objectContaining({ sessionId: 1, threshold: 3 })
+      );
+    });
+
+    it('still confirms and drops a genuinely empty reply without retrying', async () => {
+      const { confirmClaimedMessages, resetProcessingToPending } = unreadableSessionManager();
+      const session = createMockSession({ claimedMessageIds: [11] });
+
+      await processAgentResponse(
+        '', session, mockDbManager, mockSessionManager, mockWorker, 100, null, 'TestAgent'
+      );
+
+      expect(resetProcessingToPending).not.toHaveBeenCalled();
+      expect(confirmClaimedMessages).toHaveBeenCalledWith(1);
+      expect(mockStoreObservations).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('positive skip token (mc-u2vo2 fix 1)', () => {
+    it('treats <skip_observation/> as a clean skip, not an error or a drop', async () => {
+      const confirmClaimedMessages = mock(() => Promise.resolve(0));
+      const resetProcessingToPending = mock(() => Promise.resolve(1));
+      mockSessionManager = {
+        getMessageIterator: async function* () { yield* []; },
+        getPendingMessageStore: () => ({ confirmProcessed: mock(() => {}) }),
+        getClaimedMessages: () => [],
+        confirmClaimedMessages,
+        resetProcessingToPending,
+      } as unknown as SessionManager;
+
+      const session = createMockSession({ claimedMessageIds: [21, 22] });
+
+      await processAgentResponse(
+        '<skip_observation/>', session, mockDbManager, mockSessionManager, mockWorker, 100, null, 'TestAgent'
+      );
+
+      expect(confirmClaimedMessages).toHaveBeenCalledWith(1);
+      expect(resetProcessingToPending).not.toHaveBeenCalled();
+      expect(mockStoreObservations).not.toHaveBeenCalled();
+      expect(logger.error).not.toHaveBeenCalled();
+      expect(session.earliestPendingTimestamp).toBeNull();
+      expect(session.consecutiveInvalidOutputs).toBe(0);
     });
   });
 

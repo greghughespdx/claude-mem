@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { ClassifiedProviderError } from '../../src/services/worker/provider-errors.js';
-import { isRetryableKind } from '../../src/services/worker/retry.js';
+import { isRetryableKind, DEFAULT_PROVIDER_TIMEOUT_MS } from '../../src/services/worker/retry.js';
 
 // Pins the retry policy: quota/auth/unrecoverable errors must fail fast (no
 // pointless retries of something that cannot succeed); transient and
@@ -36,3 +36,10 @@ describe('isRetryableKind', () => {
     expect(isRetryableKind(err)).toBe(false);
   });
 });
+
+describe('per-attempt provider timeout (mc-u2vo2 fix 3)', () => {
+  it('defaults to 180 seconds, not the old 30', () => {
+    expect(DEFAULT_PROVIDER_TIMEOUT_MS).toBe(180_000);
+  });
+});
+

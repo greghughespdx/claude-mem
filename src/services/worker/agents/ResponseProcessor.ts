@@ -1,6 +1,6 @@
 
 import { logger } from '../../../utils/logger.js';
-import { parseAgentXml, type ParsedObservation, type ParsedSummary } from '../../../sdk/parser.js';
+import { parseAgentXml, type ParsedObservation, type ParsedSummary, type ParseResult } from '../../../sdk/parser.js';
 import {
   classifyObserverOutput,
   isAuthFailureObserverOutput,
@@ -30,6 +30,41 @@ type ObservationFileEvidenceMessage = Pick<PendingMessage, 'type' | 'tool_name' 
 export interface ObservationFileEvidence {
   files_read: string[];
   files_modified: string[];
+}
+
+type ValidParseResult = Extract<ParseResult, { valid: true }>;
+
+/**
+ * Consecutive unreadable observer replies before the pipeline says so at ERROR
+ * level (mc-u2vo2 fix 2). Low on purpose: three in a row on one session means
+ * the model is not producing the output shape at all, which is a state worth
+ * seeing in the log rather than a transient miss.
+ */
+const INVALID_OUTPUT_ALERT_THRESHOLD = 3;
+
+/** Cap on the raw text kept in a salvaged observation. */
+const SALVAGE_MAX_CHARS = 8000;
+
+/**
+ * Build a placeholder observation carrying the raw, unreadable observer reply
+ * (mc-u2vo2 fix 2). The batch already failed twice; storing the text keeps the
+ * work visible and searchable instead of deleting it silently, and the type and
+ * title make clear this was salvaged, not generated.
+ */
+function buildSalvagedObservation(raw: string, outputClass: string, agentName: string): ParsedObservation {
+  const truncated = raw.length > SALVAGE_MAX_CHARS
+    ? `${raw.slice(0, SALVAGE_MAX_CHARS)}\n[...truncated, ${raw.length - SALVAGE_MAX_CHARS} more characters]`
+    : raw;
+  return {
+    type: 'salvaged_observer_output',
+    title: `Salvaged unparseable ${agentName} observer output (${outputClass})`,
+    subtitle: 'Stored verbatim after the reply failed to parse twice; not a generated observation.',
+    facts: [],
+    narrative: `SALVAGED RAW OBSERVER OUTPUT (class ${outputClass}, unreadable after one retry):\n\n${truncated}`,
+    concepts: [],
+    files_read: [],
+    files_modified: [],
+  };
 }
 
 const READ_TOOL_NAMES = new Set(['Read']);
@@ -309,7 +344,7 @@ export async function processAgentResponse(
     session.conversationHistory.push({ role: 'assistant', content: text });
   }
 
-  const parsed = parseAgentXml(text, session.contentSessionId);
+  const initialParse = parseAgentXml(text, session.contentSessionId);
 
   // Provider enum for telemetry, derived once so the invalid-output and
   // success paths stamp the same value.
@@ -318,7 +353,11 @@ export async function processAgentResponse(
     ({ SDK: 'claude', Gemini: 'gemini', OpenRouter: 'openrouter' } as Record<string, string>)[agentName] ??
     'claude';
 
-  if (!parsed.valid) {
+  let parsed: ValidParseResult;
+
+  if (initialParse.valid) {
+    parsed = initialParse;
+  } else {
     // The conversation filled up. Retire it and start a fresh generation
     // seeded with this session's own observations, rather than re-queueing into
     // a conversation that can only keep growing.
@@ -374,11 +413,12 @@ export async function processAgentResponse(
     }
 
     // Classify the non-XML output so a dropped batch is visible, not silent.
-    // Ordinary idle/prose is a claimed no-op batch: confirm it and do not build
-    // any respawn debt from repeated skip acknowledgements.
     const outputClass = classifyObserverOutput(text);
     const preview = previewOutput(text);
-    session.consecutiveInvalidOutputs = 0;
+    const claimedIds = session.claimedMessageIds ?? [];
+    const batchId = claimedIds.length > 0
+      ? `session-${session.sessionDbId}/messages-${claimedIds[0]}..${claimedIds[claimedIds.length - 1]}(n=${claimedIds.length})`
+      : `session-${session.sessionDbId}/messages-none`;
     // The overflow/quota/auth rejections returned above, so reaching here means
     // the provider accepted this prompt and answered it. That is proof the
     // conversation fits, whether or not the answer parsed — so the recycle
@@ -386,29 +426,120 @@ export async function processAgentResponse(
     // that answered "idle" twice in a row trip the exhausted branch and wedge.
     session.consecutiveContextOverflows = 0;
 
-    // consecutiveInvalidOutputs is deliberately always 0 here (see worker-types),
-    // so logging it read as "the breaker is fine" on every rejection and hid
-    // #3800 for a full day of failures. Report the counter that can actually be
-    // non-zero instead.
-    logger.warn('PARSER', `${agentName} returned non-XML ${outputClass} response — ignoring queued batch`, {
+    if (outputClass === 'idle') {
+      // An empty reply is a claimed no-op batch: confirm it and do not build
+      // any respawn debt from repeated skip acknowledgements. mc-u2vo2 fix 1
+      // gives the model <skip_observation/> so it can say this out loud; this
+      // branch stays for the models that still answer with nothing at all.
+      session.consecutiveInvalidOutputs = 0;
+      session.invalidOutputRetried = false;
+      logger.warn('PARSER', `${agentName} returned an empty response — ignoring queued batch`, {
+        sessionId: session.sessionDbId,
+        outputClass,
+        preview,
+        batchId,
+        consecutiveContextOverflows: session.consecutiveContextOverflows,
+      });
+      await sessionManager.confirmClaimedMessages(session.sessionDbId);
+      session.earliestPendingTimestamp = null;
+      return;
+    }
+
+    // mc-u2vo2 fix 2. Everything below this line is a reply that carried real
+    // text the parser could not read: conversational prose, or XML that was
+    // opened and never closed. Before this fix both were acked and thrown away
+    // with a WARN, which is where observations were actually being lost (112
+    // batches on 2026-09-12 alone). Now the batch is kept: reset to pending and
+    // retried exactly once, and if the retry is unreadable too the raw text is
+    // stored as a salvaged observation rather than deleted.
+    session.consecutiveInvalidOutputs += 1;
+
+    if (!session.invalidOutputRetried && claimedIds.length > 0) {
+      session.invalidOutputRetried = true;
+      logger.warn('PARSER', `${agentName} returned unreadable ${outputClass} output — resetting batch to pending for one retry`, {
+        sessionId: session.sessionDbId,
+        outputClass,
+        preview,
+        batchId,
+        consecutiveInvalidOutputs: session.consecutiveInvalidOutputs,
+      });
+      await sessionManager.resetProcessingToPending(session.sessionDbId);
+      return;
+    }
+
+    // The retry (or a batch with nothing claimed to retry) also failed.
+    session.invalidOutputRetried = false;
+
+    if (session.consecutiveInvalidOutputs >= INVALID_OUTPUT_ALERT_THRESHOLD) {
+      logger.error('PARSER', `${agentName} produced ${session.consecutiveInvalidOutputs} consecutive unreadable outputs — observer output is not parseable`, {
+        sessionId: session.sessionDbId,
+        outputClass,
+        preview,
+        batchId,
+        consecutiveInvalidOutputs: session.consecutiveInvalidOutputs,
+        threshold: INVALID_OUTPUT_ALERT_THRESHOLD,
+      });
+    }
+
+    // Only `xml` output is salvaged. That class is an observation the model
+    // really was writing and stopped mid-tag (111 batches on 2026-09-12), so the
+    // raw text is worth keeping. `prose` carries no observation root at all -
+    // it is reasoning leakage or a plain-language skip - and storing it would
+    // pollute memory with acknowledgements, so it gets the visible ERROR with
+    // its batch id instead. Either way the batch is never dropped in silence.
+    const canSalvage = outputClass === 'xml' && !!session.memorySessionId && claimedIds.length > 0;
+
+    if (!canSalvage) {
+      logger.error('PARSER', `${agentName} output for batch ${batchId} is unreadable after one retry and cannot be salvaged — batch dropped`, {
+        sessionId: session.sessionDbId,
+        outputClass,
+        preview,
+        batchId,
+        reason: outputClass !== 'xml'
+          ? 'no observation root to salvage'
+          : (session.memorySessionId ? 'no claimed messages' : 'no memorySessionId'),
+        consecutiveInvalidOutputs: session.consecutiveInvalidOutputs,
+      });
+      await sessionManager.confirmClaimedMessages(session.sessionDbId);
+      session.earliestPendingTimestamp = null;
+      return;
+    }
+
+    logger.error('PARSER', `${agentName} output for batch ${batchId} is unreadable after one retry — storing salvaged raw text`, {
       sessionId: session.sessionDbId,
       outputClass,
       preview,
-      consecutiveContextOverflows: session.consecutiveContextOverflows,
+      batchId,
+      rawChars: text.length,
+      consecutiveInvalidOutputs: session.consecutiveInvalidOutputs,
     });
 
-    // Plain-text skip responses are intentionally ignored. Re-queueing them
-    // creates an observer loop where the same low-signal batch is retried.
-    await sessionManager.confirmClaimedMessages(session.sessionDbId);
-    session.earliestPendingTimestamp = null;
-    return;
+    parsed = {
+      valid: true,
+      observations: [buildSalvagedObservation(text, outputClass, agentName)],
+      summary: null,
+    };
   }
 
   // Valid parse — clear the invalid-output counter so transient misses don't
   // accumulate toward a respawn across a healthy session, and clear the overflow
   // counter so recycles only ever trip on *consecutive* failures.
   session.consecutiveInvalidOutputs = 0;
+  session.invalidOutputRetried = false;
   session.consecutiveContextOverflows = 0;
+
+  // mc-u2vo2 fix 1: a positive skip token. The observer said "nothing worth
+  // recording here" in words the parser understands, so the batch is finished,
+  // not failed: confirm it and store nothing.
+  if (parsed.observerSkip) {
+    logger.info('PARSER', `${agentName} returned a clean skip token — nothing to record for this batch`, {
+      sessionId: session.sessionDbId,
+      outputClass: 'xml',
+    });
+    await sessionManager.confirmClaimedMessages(session.sessionDbId);
+    session.earliestPendingTimestamp = null;
+    return;
+  }
 
   if (!session.memorySessionId) {
     logger.warn('SDK', 'memorySessionId not yet captured; deferring storage until next round', {

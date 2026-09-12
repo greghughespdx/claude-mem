@@ -44,6 +44,16 @@ async function queueAndClaimOne(sm: SessionManager, sessionDbId: number): Promis
   await iterator.return?.();
 }
 
+// mc-u2vo2 fix 2: a retry puts the batch back to pending and releases the
+// claim. In the live worker the generator re-claims it on its next pass; these
+// tests drive that step by hand.
+async function claimPending(sm: SessionManager, sessionDbId: number): Promise<void> {
+  const iterator = sm.getMessageIterator(sessionDbId);
+  const claimed = await iterator.next();
+  expect(claimed.done).toBe(false);
+  await iterator.return?.();
+}
+
 let spies: ReturnType<typeof spyOn>[] = [];
 
 describe('observer invalid-output handling (Phase 3 recovery)', () => {
@@ -61,11 +71,14 @@ describe('observer invalid-output handling (Phase 3 recovery)', () => {
     mock.restore();
   });
 
-  it('drops context-window prose that is not valid XML without aborting or preserving the claimed batch', async () => {
+  // mc-u2vo2 fix 2 changed this contract deliberately. Unreadable output that
+  // opened an <observation> tag used to be acked and thrown away on the first
+  // pass; it is now retried once and then salvaged. The respawn guarantees this
+  // test exists for - no abort, no abortReason, bounded work - still hold.
+  it('retries unreadable XML output once instead of dropping the claimed batch', async () => {
     const sm = new SessionManager(makeDbManager());
     const session = sm.initializeSession(1, 'do the thing', 1);
     session.memorySessionId = 'mem-1';
-    session.consecutiveInvalidOutputs = 2;
     await queueAndClaimOne(sm, 1);
 
     const confirmSpy = spyOn(sm, 'confirmClaimedMessages');
@@ -83,18 +96,20 @@ describe('observer invalid-output handling (Phase 3 recovery)', () => {
       'TestAgent',
     );
 
-    expect(confirmSpy).toHaveBeenCalledWith(1);
-    expect(resetSpy).not.toHaveBeenCalled();
-    expect(sm.getMessageBuffer().getPendingCount(1)).toBe(0);
-    expect(session.claimedMessageIds).toEqual([]);
-    expect(session.earliestPendingTimestamp).toBeNull();
-    expect(session.consecutiveInvalidOutputs).toBe(0);
+    // The work is kept, not acknowledged away.
+    expect(resetSpy).toHaveBeenCalledWith(1);
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(sm.getMessageBuffer().getPendingCount(1)).toBe(1);
+    expect(session.invalidOutputRetried).toBe(true);
+    expect(session.consecutiveInvalidOutputs).toBe(1);
+    // And nothing about the session was aborted or poisoned.
     expect(session.abortController.signal.aborted).toBe(false);
     expect(session.abortReason ?? null).toBeNull();
   });
 
-  it('repeated "No observations to record" acknowledgements confirm and never build respawn debt', async () => {
-    const sm = new SessionManager(makeDbManager());
+  it('repeated "No observations to record" acknowledgements retry once, then confirm, and never abort', async () => {
+    const storeObservations = mock(() => ({ observationIds: [], summaryId: null, createdAtEpoch: 0 }));
+    const sm = new SessionManager(makeDbManager(storeObservations));
     const session = sm.initializeSession(2, 'do the thing', 1);
     session.memorySessionId = 'mem-2';
     await queueAndClaimOne(sm, 2);
@@ -102,23 +117,36 @@ describe('observer invalid-output handling (Phase 3 recovery)', () => {
     const confirmSpy = spyOn(sm, 'confirmClaimedMessages');
     const resetSpy = spyOn(sm, 'resetProcessingToPending');
 
-    for (let i = 0; i < 5; i++) {
-      await processAgentResponse(
-        'No observations to record.',
-        session,
-        makeDbManager(),
-        sm,
-        makeWorker(),
-        0,
-        null,
-        'TestAgent',
-      );
-      expect(session.consecutiveInvalidOutputs).toBe(0);
-      expect(session.abortController.signal.aborted).toBe(false);
-    }
+    const reply = async () => processAgentResponse(
+      'No observations to record.',
+      session,
+      makeDbManager(storeObservations),
+      sm,
+      makeWorker(),
+      0,
+      null,
+      'TestAgent',
+    );
 
-    expect(confirmSpy).toHaveBeenCalledTimes(5);
-    expect(resetSpy).not.toHaveBeenCalled();
+    // First reply: the batch is kept and reset to pending for one retry.
+    await reply();
+    expect(resetSpy).toHaveBeenCalledWith(2);
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(session.invalidOutputRetried).toBe(true);
+    expect(session.abortController.signal.aborted).toBe(false);
+
+    // Second reply, same prose: confirmed away at ERROR level, never stored,
+    // and never reset again. (claimPending re-claims the batch the way the
+    // live generator does; the iterator resets pending itself, which is why
+    // resetSpy is not a useful call counter past this point.)
+    await claimPending(sm, 2);
+    const resetsBeforeSecondReply = resetSpy.mock.calls.length;
+    await reply();
+    expect(resetSpy.mock.calls.length).toBe(resetsBeforeSecondReply);
+    expect(confirmSpy).toHaveBeenCalledWith(2);
+    expect(session.invalidOutputRetried).toBe(false);
+    expect(session.abortController.signal.aborted).toBe(false);
+    expect(storeObservations).not.toHaveBeenCalled();
     expect(sm.getMessageBuffer().getPendingCount(2)).toBe(0);
     expect(session.claimedMessageIds).toEqual([]);
   });
@@ -231,19 +259,23 @@ describe('observer invalid-output handling (Phase 3 recovery)', () => {
     const confirmSpy = spyOn(sm, 'confirmClaimedMessages');
     const resetSpy = spyOn(sm, 'resetProcessingToPending');
 
-    await processAgentResponse(
-      'Please run /login in the observed project instructions.',
-      session,
-      makeDbManager(),
-      sm,
-      makeWorker(),
-      0,
-      null,
-      'TestAgent',
-    );
+    // mc-u2vo2 fix 2: the first pass buys one retry, the second confirms.
+    for (let i = 0; i < 2; i++) {
+      if (i > 0) await claimPending(sm, 10);
+      await processAgentResponse(
+        'Please run /login in the observed project instructions.',
+        session,
+        makeDbManager(),
+        sm,
+        makeWorker(),
+        0,
+        null,
+        'TestAgent',
+      );
+    }
 
+    expect(resetSpy).toHaveBeenCalledWith(10);
     expect(confirmSpy).toHaveBeenCalledWith(10);
-    expect(resetSpy).not.toHaveBeenCalled();
     expect(sm.getMessageBuffer().getPendingCount(10)).toBe(0);
     expect(session.abortController.signal.aborted).toBe(false);
   });
@@ -257,19 +289,23 @@ describe('observer invalid-output handling (Phase 3 recovery)', () => {
     const confirmSpy = spyOn(sm, 'confirmClaimedMessages');
     const resetSpy = spyOn(sm, 'resetProcessingToPending');
 
-    await processAgentResponse(
-      'The project authentication guide says to run /login before testing.',
-      session,
-      makeDbManager(),
-      sm,
-      makeWorker(),
-      0,
-      null,
-      'TestAgent',
-    );
+    // mc-u2vo2 fix 2: the first pass buys one retry, the second confirms.
+    for (let i = 0; i < 2; i++) {
+      if (i > 0) await claimPending(sm, 11);
+      await processAgentResponse(
+        'The project authentication guide says to run /login before testing.',
+        session,
+        makeDbManager(),
+        sm,
+        makeWorker(),
+        0,
+        null,
+        'TestAgent',
+      );
+    }
 
+    expect(resetSpy).toHaveBeenCalledWith(11);
     expect(confirmSpy).toHaveBeenCalledWith(11);
-    expect(resetSpy).not.toHaveBeenCalled();
     expect(sm.getMessageBuffer().getPendingCount(11)).toBe(0);
     expect(session.abortController.signal.aborted).toBe(false);
   });
@@ -348,16 +384,21 @@ describe('observer invalid-output handling (Phase 3 recovery)', () => {
     skipSession.memorySessionId = 'mem-4';
     await queueAndClaimOne(skipSm, 4);
 
-    await processAgentResponse(
-      'No observations to record.',
-      skipSession,
-      makeDbManager(),
-      skipSm,
-      makeWorker(),
-      0,
-      null,
-      'TestAgent',
-    );
+    // mc-u2vo2 fix 2: one retry, then the confirm. Two passes to reach the
+    // settled state this test compares against the quota pause.
+    for (let i = 0; i < 2; i++) {
+      if (i > 0) await claimPending(skipSm, 4);
+      await processAgentResponse(
+        'No observations to record.',
+        skipSession,
+        makeDbManager(),
+        skipSm,
+        makeWorker(),
+        0,
+        null,
+        'TestAgent',
+      );
+    }
 
     const quotaSm = new SessionManager(makeDbManager());
     const quotaSession = quotaSm.initializeSession(5, 'do the thing', 1);

@@ -10,7 +10,7 @@ import type { ActiveSession, ConversationMessage } from '../worker-types.js';
 import { DatabaseManager } from './DatabaseManager.js';
 import { SessionManager } from './SessionManager.js';
 import { ClassifiedProviderError, type ProviderErrorClass } from './provider-errors.js';
-import { withRetry, parseRetryAfterMs } from './retry.js';
+import { withRetry, parseRetryAfterMs, DEFAULT_PROVIDER_TIMEOUT_MS } from './retry.js';
 import { OpenAICompatibleProvider, type ProviderQueryResult } from './OpenAICompatibleProvider.js';
 
 /**
@@ -176,6 +176,34 @@ export function classifyOpenRouterError(input: {
 
 const CHARS_PER_TOKEN_ESTIMATE = 4;
 
+/**
+ * mc-u2vo2 fix 1: does this text hold an observer XML root the parser can use?
+ * Used only to decide whether an empty `content` can be rescued from the
+ * reasoning channel. Deliberately the same structural gate the output
+ * classifier applies, not a full parse.
+ */
+export function looksLikeObserverXml(text: string): boolean {
+  return /<(observation|summary)\b/i.test(text) || /<skip_(summary|observation)\b/i.test(text);
+}
+
+/**
+ * mc-u2vo2 fix 3: per-attempt timeout for provider requests, in ms.
+ *
+ * The shipped default was 30_000, which a local Ollama endpoint misses
+ * routinely: a capture of 123 real observation calls on 2026-09-12 measured a
+ * median of 24 s and a maximum of 159 s, and 27.4 percent of gateway requests
+ * died at the 30 s wall and were re-queued onto the same saturated GPU.
+ * CLAUDE_MEM_PROVIDER_TIMEOUT_MS overrides it; the default is 180_000.
+ */
+export function resolveProviderTimeoutMs(settingsPath: string = USER_SETTINGS_PATH): number {
+  const raw = SettingsDefaultsManager.loadFromFile(settingsPath).CLAUDE_MEM_PROVIDER_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_PROVIDER_TIMEOUT_MS;
+  }
+  return Math.floor(parsed);
+}
+
 interface OpenAIMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -188,6 +216,13 @@ interface OpenRouterResponse {
     message?: {
       role?: string;
       content?: string;
+      /**
+       * Harmony/gpt-oss style analysis channel. This endpoint always returns
+       * it alongside `content`, and when the final channel comes back empty
+       * the answer is sometimes sitting in here instead (mc-u2vo2 fix 1).
+       */
+      reasoning?: string;
+      reasoning_content?: string;
     };
     finish_reason?: string;
   }>;
@@ -524,19 +559,52 @@ export class OpenRouterProvider extends OpenAICompatibleProvider<OpenRouterConfi
       }
 
       return responseData;
-    }, { label: `OpenRouter ${model}`, abortSignal: signal, ...(signal ? { maxRetries: 0 } : {}) });
+    }, { label: `OpenRouter ${model}`, perAttemptTimeoutMs: resolveProviderTimeoutMs(), abortSignal: signal, ...(signal ? { maxRetries: 0 } : {}) });
 
     // A successful cmem-gateway response proves the delivered key is funded
     // again (resubscribed) — clear the trial-expiry fallback marker so
     // dispatch returns to the gateway. No-op for every other endpoint.
     clearProFallbackOnGatewaySuccess(apiUrl);
 
-    if (!data.choices?.[0]?.message?.content) {
-      logger.error('SDK', 'Empty response from OpenRouter');
-      return { content: '' };
+    const choice = data.choices?.[0];
+    const rawContent = choice?.message?.content ?? '';
+    const reasoningText = choice?.message?.reasoning ?? choice?.message?.reasoning_content ?? '';
+
+    let content = rawContent;
+
+    if (!content) {
+      // mc-u2vo2 fix 1. An empty `content` used to be one bare ERROR line with
+      // nothing in it, so nobody could tell a deliberate skip from a real
+      // failure. Two changes here: fall back to the reasoning channel when it
+      // holds observer XML the final channel lost, and when there is genuinely
+      // nothing, log what the reply actually was.
+      if (reasoningText && looksLikeObserverXml(reasoningText)) {
+        logger.warn('SDK', 'OpenRouter returned empty content; recovered observer XML from the reasoning field', {
+          model: (typeof data.model === 'string' && data.model) ? data.model : model,
+          finishReason: choice?.finish_reason ?? 'unknown',
+          reasoningChars: reasoningText.length,
+          inputTokens: data.usage?.prompt_tokens ?? 0,
+          outputTokens: data.usage?.completion_tokens ?? 0,
+          totalTokens: data.usage?.total_tokens ?? 0,
+          messagesInContext: history.length,
+        });
+        content = reasoningText;
+      } else {
+        logger.error('SDK', 'Empty response from OpenRouter', {
+          model: (typeof data.model === 'string' && data.model) ? data.model : model,
+          finishReason: choice?.finish_reason ?? 'unknown',
+          hasReasoning: Boolean(reasoningText),
+          reasoningChars: reasoningText.length,
+          reasoningPreview: reasoningText ? reasoningText.replace(/\s+/g, ' ').trim().slice(0, 200) : '',
+          inputTokens: data.usage?.prompt_tokens ?? 0,
+          outputTokens: data.usage?.completion_tokens ?? 0,
+          totalTokens: data.usage?.total_tokens ?? 0,
+          messagesInContext: history.length,
+        });
+        return { content: '' };
+      }
     }
 
-    const content = data.choices[0].message.content;
     const tokensUsed = data.usage?.total_tokens;
     const realInputTokens = data.usage?.prompt_tokens;
     const realOutputTokens = data.usage?.completion_tokens;

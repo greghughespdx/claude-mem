@@ -35,7 +35,18 @@ export interface ParsedSummary {
 }
 
 export type ParseResult =
-  | { valid: true; observations: ParsedObservation[]; summary: ParsedSummary | null }
+  | {
+      valid: true;
+      observations: ParsedObservation[];
+      summary: ParsedSummary | null;
+      /**
+       * The observer deliberately declined to record anything for this batch
+       * (mc-u2vo2 fix 1). Set only by the positive <skip_observation/> token.
+       * A clean skip is not a failure and not a dropped batch: the caller
+       * confirms the claimed messages and stores nothing.
+       */
+      observerSkip?: boolean;
+    }
   | { valid: false };
 
 export function parseAgentXml(raw: string, correlationId?: string | number): ParseResult {
@@ -44,6 +55,16 @@ export function parseAgentXml(raw: string, correlationId?: string | number): Par
   }
 
   raw = stripCodeFences(raw);
+
+  // mc-u2vo2 fix 1: a positive skip token for the observation path. The mode
+  // file used to ask for a literally empty reply when there was nothing worth
+  // recording, which the provider layer then logged as "Empty response from
+  // OpenRouter" and the classifier read as idle. A token says the same thing
+  // out loud, and it parses.
+  const observationSkipMatch = /<skip_observation(?:\s+reason="([^"]*)")?\s*\/>/i.exec(raw);
+  if (observationSkipMatch) {
+    return { valid: true, observations: [], summary: null, observerSkip: true };
+  }
 
   const skipMatch = /<skip_summary(?:\s+reason="([^"]*)")?\s*\/>/.exec(raw);
   if (skipMatch) {
