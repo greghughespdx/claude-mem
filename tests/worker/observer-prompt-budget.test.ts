@@ -57,7 +57,7 @@ describe('local observer prompt budget', () => {
   });
 
   it('keeps a long instruction message and trims a shorter observation body', () => {
-    const longInstructions = instructions.repeat(1200);
+    const longInstructions = `<outcome>${'instruction '.repeat(6000)}</outcome>${instructions}`;
     const history: ConversationMessage[] = [
       { role: 'user', content: longInstructions },
       { role: 'user', content: observation('new observation '.repeat(1000)) },

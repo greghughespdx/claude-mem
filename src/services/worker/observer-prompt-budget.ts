@@ -22,13 +22,17 @@ function estimatedTokens(history: ConversationMessage[]): number {
 }
 
 function trimLargestObservationBody(content: string, removeChars: number): string | null {
+  const observedStart = content.indexOf('<observed_from_primary_session>');
+  const observedEnd = observedStart < 0 ? -1 : content.indexOf('</observed_from_primary_session>', observedStart);
   const fields = ['parameters', 'outcome', 'user_request', 'session_start_context'].map(tag => {
     const open = `<${tag}>`;
     const close = `</${tag}>`;
     const start = content.indexOf(open);
     const end = start < 0 ? -1 : content.indexOf(close, start + open.length);
-    return { start: start + open.length, end, length: end - start - open.length };
-  }).filter(field => field.end >= 0 && field.length > ELISION.length);
+    const insideObservation = observedStart >= 0 && start > observedStart && end < observedEnd;
+    const dataField = tag === 'session_start_context' || insideObservation;
+    return { start: start + open.length, end, length: end - start - open.length, dataField };
+  }).filter(field => field.dataField && field.end >= 0 && field.length > ELISION.length);
   fields.sort((a, b) => b.length - a.length);
   const field = fields[0];
   if (!field) return null;
