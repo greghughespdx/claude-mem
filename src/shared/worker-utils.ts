@@ -365,10 +365,10 @@ function readPackageVersion(packageJsonPath: string): string | null {
  * dying-worker restart handoff — launches. Detection and respawn consulting
  * different oracles is what made the 2026-07-22 restart storm possible.
  *
- * Highest version wins. Array.prototype.sort is stable, so equal versions
- * preserve the cache → marketplace → cwd precedence, and versionless
- * candidates rank behind every versioned one. The opt-in override exists for
- * local testing.
+ * Cache installs take precedence over marketplace and cwd fallbacks. Version
+ * sorting applies within each tier, so a marketplace release cannot outrank
+ * a localfix cache install at the same base version. The opt-in override exists
+ * for local testing.
  */
 export function resolveWorkerScript(): WorkerScriptCandidate | null {
   const override = process.env.CLAUDE_MEM_WORKER_SCRIPT_PATH?.trim();
@@ -377,8 +377,7 @@ export function resolveWorkerScript(): WorkerScriptCandidate | null {
     logger.debug('SYSTEM', 'Ignoring missing CLAUDE_MEM_WORKER_SCRIPT_PATH override', { override });
   }
 
-  const candidates: WorkerScriptCandidate[] = [
-    ...cacheWorkerScriptCandidates(),
+  const fallbackCandidates: WorkerScriptCandidate[] = [
     {
       scriptPath: candidateWorkerScriptPath(path.join(MARKETPLACE_ROOT, 'plugin')),
       version: readPackageVersion(path.join(MARKETPLACE_ROOT, 'package.json')),
@@ -389,12 +388,17 @@ export function resolveWorkerScript(): WorkerScriptCandidate | null {
     },
   ];
 
-  return selectWorkerScript(candidates);
+  return selectWorkerScript(cacheWorkerScriptCandidates(), fallbackCandidates);
 }
 
-export function selectWorkerScript(candidates: WorkerScriptCandidate[]): WorkerScriptCandidate | null {
+export function selectWorkerScript(
+  candidates: WorkerScriptCandidate[],
+  fallbackCandidates: WorkerScriptCandidate[] = []
+): WorkerScriptCandidate | null {
   const installed = candidates.filter(candidate => existsSync(candidate.scriptPath));
-  if (installed.length === 0) return null;
+  if (installed.length === 0) {
+    return fallbackCandidates.length > 0 ? selectWorkerScript(fallbackCandidates) : null;
+  }
 
   installed.sort((a, b) => {
     if (a.version === null && b.version === null) return 0;

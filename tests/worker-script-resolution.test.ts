@@ -97,6 +97,31 @@ describe('cacheWorkerScriptCandidates', () => {
 });
 
 describe('selectWorkerScript', () => {
+  test('keeps a localfix cache install ahead of a marketplace release', () => {
+    const cacheRoot = makeCacheRoot();
+    const localfix = makeVersionDir(cacheRoot, '13.24.8-localfix1');
+    const marketplaceRoot = makeCacheRoot();
+    const marketplace = makeVersionDir(marketplaceRoot, '13.24.8');
+
+    const selected = selectWorkerScript(
+      [{ scriptPath: localfix, version: '13.24.8-localfix1' }],
+      [{ scriptPath: marketplace, version: '13.24.8' }]
+    );
+    expect(selected?.scriptPath).toBe(localfix);
+  });
+
+  test('uses marketplace only when no usable cache script remains', () => {
+    const cacheRoot = makeCacheRoot();
+    const marketplaceRoot = makeCacheRoot();
+    const marketplace = makeVersionDir(marketplaceRoot, '13.24.8');
+
+    const selected = selectWorkerScript(
+      [{ scriptPath: join(cacheRoot, 'missing', 'worker-service.cjs'), version: '13.24.8-localfix1' }],
+      [{ scriptPath: marketplace, version: '13.24.8' }]
+    );
+    expect(selected?.scriptPath).toBe(marketplace);
+  });
+
   test('picks the highest version regardless of directory mtime', () => {
     const cacheRoot = makeCacheRoot();
     // No orphan stamps at all: even then, a newest-mtime old dir must lose.
