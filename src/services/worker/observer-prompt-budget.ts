@@ -60,20 +60,17 @@ export function budgetObserverPrompt(history: ConversationMessage[]): BudgetedPr
   // An oversized current observation can cross the limit by itself. Only
   // its data fields may be shortened; the instruction tail is untouched.
   while (JSON.stringify(kept).length > MAX_CHARS) {
-    const candidates = kept.map((message, index) => ({ message, index }))
-      .filter(item => item.message.role === 'user' &&
-        (item.message.content.includes('<observed_from_primary_session>') ||
-         item.message.content.includes('<session_start_context>')))
-      .sort((a, b) => b.message.content.length - a.message.content.length);
-    const candidate = candidates[0];
-    if (!candidate) throw new Error('Observer prompt exceeds local context with no observation body to trim');
     const excess = JSON.stringify(kept).length - MAX_CHARS;
-    const trimmed = trimLargestObservationBody(candidate.message.content, excess + 256);
-    if (!trimmed || trimmed.length >= candidate.message.content.length) {
+    const trimmable = kept.map((message, index) => ({ message, index }))
+      .filter(entry => entry.message.role === 'user')
+      .sort((a, b) => b.message.content.length - a.message.content.length)
+      .map(entry => ({ ...entry, trimmed: trimLargestObservationBody(entry.message.content, excess + 256) }))
+      .find(entry => entry.trimmed !== null && entry.trimmed.length < entry.message.content.length);
+    if (!trimmable || trimmable.trimmed === null) {
       throw new Error('Observer prompt instructions exceed the local context budget');
     }
-    trimmedChars += candidate.message.content.length - trimmed.length;
-    kept[candidate.index] = { ...candidate.message, content: trimmed };
+    trimmedChars += trimmable.message.content.length - trimmable.trimmed.length;
+    kept[trimmable.index] = { ...trimmable.message, content: trimmable.trimmed };
   }
 
   return { history: kept, beforeTokens, afterTokens: estimatedTokens(kept), droppedTurns, trimmedChars };

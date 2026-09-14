@@ -45,7 +45,7 @@ describe('local observer prompt budget', () => {
 
   it('refuses to cut instructions when no observation body can be shortened', () => {
     expect(() => budgetObserverPrompt([{ role: 'user', content: instructions.repeat(30000) }]))
-      .toThrow('no observation body');
+      .toThrow('instructions exceed');
   });
 
   it('shortens session context before instructions when an init prompt is oversized', () => {
@@ -54,6 +54,18 @@ describe('local observer prompt budget', () => {
     expect(result.afterTokens).toBeLessThanOrEqual(26624);
     expect(result.history[0]?.content).toContain(instructions);
     expect(result.history[0]?.content).toContain('[older observation text removed to fit the context]');
+  });
+
+  it('keeps a long instruction message and trims a shorter observation body', () => {
+    const longInstructions = instructions.repeat(1200);
+    const history: ConversationMessage[] = [
+      { role: 'user', content: longInstructions },
+      { role: 'user', content: observation('new observation '.repeat(1000)) },
+    ];
+    const result = budgetObserverPrompt(history);
+    expect(result.history[0]?.content).toBe(longInstructions);
+    expect(result.history[1]?.content).toContain(instructionTail);
+    expect(result.trimmedChars).toBeGreaterThan(0);
   });
 
   it('sends the bounded copy to the local 32k endpoint without mutating history', async () => {
