@@ -13,6 +13,7 @@ import { SessionManager } from './SessionManager.js';
 import { ClassifiedProviderError, type ProviderErrorClass } from './provider-errors.js';
 import { withRetry, parseRetryAfterMs } from './retry.js';
 import { OpenAICompatibleProvider, type ProviderQueryResult } from './OpenAICompatibleProvider.js';
+import { budgetObserverPrompt } from './observer-prompt-budget.js';
 
 /**
  * OpenAI-compatible client configuration.
@@ -507,9 +508,33 @@ export class OpenRouterProvider extends OpenAICompatibleProvider<OpenRouterConfi
     appName?: string,
     signal?: AbortSignal
   ): Promise<ProviderQueryResult> {
-    const messages = this.conversationToOpenAIMessages(history);
-    const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
+    // Keep the shared conversation unchanged. Only the local 32k model gets
+    // a bounded request copy; other providers retain their existing contract.
+    const currentPrompt = history.at(-1)?.content ?? '';
+    const localObserver = model === 'gpt-oss-32k' && !isOpenRouterApiUrl(apiUrl) &&
+      currentPrompt.includes('<observed_from_primary_session>');
+    const budget = localObserver ? budgetObserverPrompt(history) : null;
+    const sentHistory = budget?.history ?? history;
+    const messages = this.conversationToOpenAIMessages(sentHistory);
+    const totalChars = sentHistory.reduce((sum, m) => sum + m.content.length, 0);
     const estimatedTokens = this.estimateTokens(messages.map(m => m.content).join(''));
+
+    if (budget) {
+      logger.info('SDK', 'Local observer prompt size', {
+        beforeTokens: budget.beforeTokens,
+        afterTokens: budget.afterTokens,
+        messagesBefore: history.length,
+        messagesAfter: sentHistory.length,
+      });
+      if (budget.droppedTurns || budget.trimmedChars) {
+        logger.warn('SDK', 'Local observer prompt trimmed', {
+          beforeTokens: budget.beforeTokens,
+          afterTokens: budget.afterTokens,
+          droppedTurns: budget.droppedTurns,
+          trimmedChars: budget.trimmedChars,
+        });
+      }
+    }
 
     logger.debug('SDK', `Querying OpenRouter multi-turn (${model})`, {
       turns: history.length,
